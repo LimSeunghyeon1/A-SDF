@@ -73,7 +73,8 @@ def get_instance_filenames_bi(data_source, pkl_path, category, split):
                 if spt == 'train' or spt == 'val': continue
             instances = data_dict[cat][spt]
             for instance in instances:
-                total_valid_paths.append(os.path.join(data_source, spt, cat, str(instance), "points_with_sdf_binary.ply"))
+                for i in range(100):
+                    total_valid_paths.append(os.path.join(data_source, spt, cat, str(instance), f"pose_{i}", "points_with_sdf_label_binary.ply"))
         
                 
     return total_valid_paths    
@@ -152,12 +153,11 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
     sdf = vertex_data['sdf']
     label = vertex_data['label']
     
-    obj_idx = filename.split('/')[-2]
+    obj_idx = filename.split('/')[-3]
     assert obj_idx.isdigit(), obj_idx
     obj_idx = int(obj_idx)
     # 라벨을 바꾸어줌
     new_label = np.full_like(label, -100)
-
     if obj_idx in to_switch_label:
         unique_label = np.unique(label)
         #1,2,3,4,....로 라벨링하기
@@ -166,10 +166,19 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
             if to_switch_label[obj_idx][ul-1] != -100:
                 new_label[label == ul] = to_change
                 print("instance", obj_idx, "change", ul, "to", to_change)
+        exit(0)
+    else:
+        # <= num_atc_parts+1인것들 저장
+        for i in range(num_atc_parts+2):
+            new_label[label == i] = i
     
-            
+    #체크 num_atc_parts+1보다 큰라벨은 없어야
+    assert new_label.max() == num_atc_parts+1, f"num_atc_parts: {num_atc_parts}, new label: {new_label.max()}"
 
-    xyz = np.vstack((x, y, z, sdf, label)).T
+
+    xyz = np.vstack((x, y, z, sdf, new_label)).T
+    
+        
     assert xyz.shape[-1] == 5, xyz.shape
     
     pos = xyz[sdf >= 0]
@@ -177,7 +186,6 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
     pos_tensor = remove_nans(torch.from_numpy(pos))
     neg_tensor = remove_nans(torch.from_numpy(neg))
     half = min(len(pos_tensor), len(neg_tensor))
-    print("half", half)
     # split the sample into half
 
     random_pos = (torch.rand(half) * pos_tensor.shape[0]).long()
@@ -186,7 +194,7 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
     sample_pos = torch.index_select(pos_tensor, 0, random_pos)
     sample_neg = torch.index_select(neg_tensor, 0, random_neg)
 
-    samples = torch.cat([sample_pos, sample_neg], 0)
+    # samples = torch.cat([sample_pos, sample_neg], 0)
     
     instance_pose_path = '/'.join(filename.split('/')[:-1])
     
@@ -284,7 +292,7 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
     
     # test 할때는 object index가 필요 없기 때문에 그것 대신 qpos_limit을 집어넣는다.
     
-    return samples, torch.Tensor(atc), torch.Tensor(atc_limit)
+    return [sample_pos, sample_neg], torch.Tensor(atc), torch.Tensor(atc_limit)
 
 def read_sdf_samples_into_ram_rbo(filename, articulation=False, num_atc_parts=1):
     npz = np.load(filename)
@@ -307,12 +315,12 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
     sdf = vertex_data['sdf']
     label = vertex_data['label']
     
-    obj_idx = filename.split('/')[-2]
+    obj_idx = filename.split('/')[-3]
     assert obj_idx.isdigit(), obj_idx
     obj_idx = int(obj_idx)
     # 라벨을 바꾸어줌
     new_label = np.full_like(label, -100)
-
+    
     if obj_idx in to_switch_label:
         unique_label = np.unique(label)
         #1,2,3,4,....로 라벨링하기
@@ -321,15 +329,21 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
             if to_switch_label[obj_idx][ul-1] != -100:
                 new_label[label == ul] = to_change
                 print("instance", obj_idx, "change", ul, "to", to_change)
+    else:
+        # <= num_atc_parts+1인것들 저장
+        for i in range(num_atc_parts+2):
+            new_label[label == i] = i
     
-            
+    #체크 num_atc_parts+1보다 큰라벨은 없어야
+    assert new_label.max() == num_atc_parts+1, f"num_atc_parts: {num_atc_parts}, new label: {new_label.max()}"
 
-    xyz = np.vstack((x, y, z, sdf, label)).T
+
+    xyz = np.vstack((x, y, z, sdf, new_label)).T
     assert xyz.shape[-1] == 5, xyz.shape
     
     pos = xyz[sdf >= 0]
     neg = xyz[sdf < 0]
-
+    assert subsample is not None
     if subsample is None:
         return xyz
     pos_tensor = remove_nans(torch.from_numpy(pos))
@@ -354,7 +368,6 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
     
     
     atc = np.zeros((num_atc_parts))
-    assert len(list(joint_dict.values())) == num_atc_parts, joint_dict
     for joint_info in joint_dict.values():
         # parent link와 child link 탐색하고, num_atc parts가=1이면 1,2 num_atc_parts=2이면 1,2,3만본다.
         p_idx = joint_info['parent_link']['index']
@@ -378,7 +391,6 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
             
         assert num_atc_parts == 1 or num_atc_parts == 2, num_atc_parts
         # joint는 만약 double이면 라벨 2번과 연결되어 있는 것을 먼저 넣고, 3번이랑 되어 있는 것을 그 다음에 집어넣는다.
-
         if num_atc_parts == 1:
             if (p_idx == 1 and c_idx == 2) or (p_idx == 2 and c_idx == 1):
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
@@ -421,8 +433,7 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
                     # else:
                     #     atc[1] = qpos - joint_info['qpos_limit'][0]
         
-        print("atc", atc)
-        assert np.all(atc != 0), atc 
+    assert np.all(atc != 0), atc 
             
     assert articulation
     
@@ -438,7 +449,6 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
     #         return (samples, torch.Tensor([atc1, atc2]), instance_idx)
     # else:
     #     return samples
-    
     return samples, torch.Tensor(atc)
        
     
@@ -640,21 +650,22 @@ class SDFSamplesBI(torch.utils.data.Dataset):
         self.data_source = data_source
         # self.npyfiles = get_instance_filenames(data_source, split)
         self.category = category
+        self.obj_id2lat_vec = dict() #obj_idx 별 lat_vec에 사용되는 인덱스 저장
+        
         self.files = self._load_data()
         self.articualtion = articulation
         self.num_atc_parts = num_atc_parts
         self.normalize_atc = normalize_atc
-        self.obj_id2lat_vec = dict() #obj_idx 별 lat_vec에 사용되는 인덱스 저장
 
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, idx):
         filename = self.files[idx]
-        obj_idx = filename.split('/')[-2]
+        obj_idx = filename.split('/')[-3]
         assert obj_idx.isdigit(), obj_idx
         obj_idx = int(obj_idx)        
-        samples, atc = unpack_sdf_samples_bi(filename, self.num_atc_parts, self.subsample, self.articualtion, self.num_atc_parts), idx
+        samples, atc = unpack_sdf_samples_bi(filename, normalize_atc=self.normalize_atc, subsample=self.subsample, articulation=self.articualtion, num_atc_parts=self.num_atc_parts)
         return (samples, atc, self.obj_id2lat_vec[obj_idx])
     def _load_data(self):
         total_valid_paths = []
@@ -673,6 +684,6 @@ class SDFSamplesBI(torch.utils.data.Dataset):
                 for instance in instances:
                     self.obj_id2lat_vec[instance] = cnt
                     cnt += 1
-                    total_valid_paths.append(os.path.join(self.data_source, spt, cat, str(instance), "points_with_sdf_binary.ply"))
-        
+                    for i in range(100):
+                        total_valid_paths.append(os.path.join(self.data_source, spt, cat, str(instance), f"pose_{i}","points_with_sdf_label_binary.ply"))
         return total_valid_paths    

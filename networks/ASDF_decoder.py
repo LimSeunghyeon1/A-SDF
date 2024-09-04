@@ -18,6 +18,7 @@ class Decoder(nn.Module):
         articulation=True,# for development
         num_atc_parts=1,
         do_sup_with_part=False,
+        normalize_atc=False,
     ):
         super(Decoder, self).__init__()
 

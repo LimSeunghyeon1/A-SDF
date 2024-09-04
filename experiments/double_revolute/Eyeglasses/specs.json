@@ -45,6 +45,5 @@
     "NumAtcParts": 2,
     "NormalizeAtc": false,
     "TrainWithParts": true,
-    "Class": "Eyeglasses",
-    "Aritculation": true
+    "Class": "Eyeglasses"
 }

@@ -45,6 +45,5 @@
     "NumAtcParts": 2,
     "NormalizeAtc": true,
     "TrainWithParts": true,
-    "Class": "Refrigerator",
-    "Aritculation": true
+    "Class": "Refrigerator"
 }

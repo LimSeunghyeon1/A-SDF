@@ -45,6 +45,6 @@
     "NumAtcParts": 1,
     "NormalizeAtc": true,
     "TrainWithParts": true,
-    "Class": "Oven",
-    "Aritculation": true
+    "Class": "Oven"
+    
 }

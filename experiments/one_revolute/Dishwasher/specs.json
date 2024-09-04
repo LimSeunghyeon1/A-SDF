@@ -45,6 +45,6 @@
     "NumAtcParts": 1,
     "NormalizeAtc": false,
     "TrainWithParts": true,
-    "Class": "Dishwasher",
-    "Aritculation": true
+    "Class": "Dishwasher"
+    
 }

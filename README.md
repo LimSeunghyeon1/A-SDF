@@ -71,17 +71,34 @@ To train a model, run
 python train.py -e examples/laptop/laptop-asdf/
 ```
 
+## (a-1) Train a model our experiment
+```
+python train_bi.py -e experiments/one_revolute/Door/
+```
+
 
 ## (b) Reconstruction
 
 To use a trained model to reconstruct explicit mesh representations of shapes from the test set, run the follow scripts, where `-m recon_testset_ttt` for inference with test-time adaptation and `-m recon_testset` otherwise.
+
 ```
 python test.py -e examples/laptop/laptop-asdf/ -c 1000 -m recon_testset_ttt
 ```
+
 To compute the chamfer distance, run:
 
 ```
 python eval.py -e examples/laptop/laptop-asdf/ -c 1000 -m recon_testset_ttt
+```
+
+## (b-1) Reconstruct our experiment
+with tta
+```
+python test_bi.py -e experiments/one_revolute/Door/ -c 1000 -m recon_testset_ttt
+```
+without tta
+```
+python test_bi.py -e experiments/one_revolute/Door/ -c 1000 -m recon_testset
 ```
 
 ## (c) Generation

@@ -19,6 +19,8 @@ def test(args, ws, specs):
     # init model
     arch = __import__("networks." + specs["NetworkArch"], fromlist=["Decoder"])
     latent_size = specs["CodeLength"]
+    
+    
     #decoder = arch.Decoder(latent_size, **specs["NetworkSpecs"], articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"], do_sup_with_part=specs["TrainWithParts"]).cuda()
     decoder = arch.Decoder(latent_size, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"], do_sup_with_part=specs["TrainWithParts"]).cuda()
     decoder = torch.nn.DataParallel(decoder)
@@ -46,7 +48,8 @@ def test(args, ws, specs):
     
     pkl_path = os.path.join("pkl_dir", f"{mode.lower()}.pkl")
     print("pkl path", pkl_path)
-    
+    print("data source", args.data_source)
+    args.data_source = specs["DataSource"]
     # dataset_name=args.dataset
     # test_split_file = specs["TestSplit"]
     # test objs

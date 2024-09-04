@@ -19,6 +19,7 @@ import asdf
 from asdf.utils import *
 import asdf.workspace as ws
 import pkl_dir
+from torch.utils.tensorboard import SummaryWriter  # Import TensorBoard
 
 def load_checkpoints(continue_from, ws, experiment_directory, lat_vecs, decoder, optimizer_all):
 
@@ -70,10 +71,8 @@ def main_function(experiment_directory, continue_from, batch_split):
         save_latent_vectors(ws, experiment_directory, str(epoch) + ".pth", lat_vecs, epoch)
 
     signal.signal(signal.SIGINT, signal_handler)
-
     # load specs 
     specs = ws.load_experiment_specifications(experiment_directory)
-
     data_source = specs["DataSource"]
     # train_split_file = specs["TrainSplit"]
     arch = __import__("networks." + specs["NetworkArch"], fromlist=["Decoder"])
@@ -135,6 +134,8 @@ def main_function(experiment_directory, continue_from, batch_split):
     # init dataloader
     # with open(train_split_file, "r") as f:
     #     train_split = json.load(f)
+    # TensorBoard SummaryWriter
+    writer = SummaryWriter(log_dir=os.path.join(experiment_directory, 'logs'))
 
     '''
     A-SDF does not support validation so merge train+valid dataset
@@ -155,20 +156,27 @@ def main_function(experiment_directory, continue_from, batch_split):
         num_workers=0,
         drop_last=True,
     )
-    print("length train loader", len(sdf_loader))
+    print("length train loader", len(sdf_dataset))
     
+    print("normalize atc", normalize_atc)
     
     assert specs["TrainWithParts"], "our datasets must support sdf with labels..."
-    # init model and shape codes
+    # # init model and shape codes
+    # if 'prismatic' in mode or ('revolute' in mode and normalize_atc):
+    #     # 값이 0~1로 나오기 때문에 decoder의 last layer의 activation function을 시그모이드로 바꾼다.
+    #     get_sigmoid = True
+    # else:
+    #     get_sigmoid = False
     decoder = arch.Decoder(num_atc_parts=specs["NumAtcParts"], do_sup_with_part=specs["TrainWithParts"]).cuda()
     decoder = torch.nn.DataParallel(decoder)
 
     assert decoder
     #scene index는 pkl 파일 순서로 매긴다.
-    num_scenes = len(sdf_loader)
+    num_scenes = int(len(sdf_dataset))
     assert num_scenes % 100 == 0, num_scenes
     num_scenes /= 100
-    assert num_scenes == len(sdf_dataset.id2lat_vec), f"num scenes: {num_scenes}, id2lat_vec: {sdf_dataset.id2lat_vec}, len: {len(sdf_dataset.id2lat_vec)}"
+    num_scenes = int(num_scenes)
+    assert num_scenes == len(sdf_dataset.obj_id2lat_vec), f"num scenes: {num_scenes}, id2lat_vec: {sdf_dataset.obj_id2lat_vec}, len: {len(sdf_dataset.obj_id2lat_vec)}"
     
     
     logging.info("There are {} train scenes".format(num_scenes))
@@ -224,12 +232,14 @@ def main_function(experiment_directory, continue_from, batch_split):
         decoder.train()
 
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
-        
+        epoch_loss = 0.0
+        epoch_part_loss = 0.0
+        epoch_reg_loss = 0.0
 
-        for all_sdf_data, indices in sdf_loader:
+        for all_sdf_data in sdf_loader:
             # Process the input data
             if specs["Articulation"]==True:
-                sdf_data = all_sdf_data[0].reshape(-1, 4)
+                sdf_data = all_sdf_data[0].reshape(-1, 5)
                 atc = all_sdf_data[1].view(-1,specs["NumAtcParts"])
                 instance_idx = all_sdf_data[2].view(-1,1)
                 atc = atc.repeat(1, all_sdf_data[0].size(1)).reshape(-1, specs["NumAtcParts"])
@@ -251,10 +261,7 @@ def main_function(experiment_directory, continue_from, batch_split):
 
             xyz = torch.chunk(xyz, batch_split)
 
-            indices = torch.chunk(
-                indices.unsqueeze(-1).repeat(1, num_samp_per_scene).view(-1),
-                batch_split,
-            )
+            
 
             if enforce_minmax:
                 sdf_gt = torch.clamp(sdf_gt, minT, maxT)
@@ -269,14 +276,12 @@ def main_function(experiment_directory, continue_from, batch_split):
             batch_loss = 0.0
 
             optimizer_all.zero_grad()
-            print("instance idx", instance_idx)
 
             for i in range(batch_split):
 
-                if specs["Articulation"]==True:
-                    batch_vecs = lat_vecs(instance_idx[i].view(-1)-1)
-                else:
-                    batch_vecs = lat_vecs(indices[i])
+                assert specs["Articulation"]
+                batch_vecs = lat_vecs(instance_idx[i].view(-1))
+                
 
                 # NN optimization
                 if specs["Articulation"]==True:
@@ -303,6 +308,7 @@ def main_function(experiment_directory, continue_from, batch_split):
                     chunk_loss = chunk_loss + reg_loss.cuda()
 
                 if do_sup_with_part:
+                    # print("gt", torch.unique(part_gt[i].view(-1)), part_gt[i].view(-1).shape, 'pred:', pred_part.shape)
                     part_loss = F.cross_entropy(pred_part, part_gt[i].view(-1).cuda())
                     part_loss *= 1e-3
                     chunk_loss = chunk_loss + part_loss.cuda()
@@ -313,6 +319,9 @@ def main_function(experiment_directory, continue_from, batch_split):
 
             if do_sup_with_part:
                 print(batch_loss, part_loss.item(), reg_loss.item(), pred_sdf.min(), pred_sdf.max())
+                epoch_loss += batch_loss
+                epoch_part_loss += part_loss.item()
+                epoch_reg_loss += reg_loss.item()
             else:
                 print(batch_loss, reg_loss.item(), pred_sdf.min(), pred_sdf.max())
             loss_log.append(batch_loss)
@@ -332,7 +341,13 @@ def main_function(experiment_directory, continue_from, batch_split):
 
         lr_log.append([schedule.get_learning_rate(epoch) for schedule in lr_schedules])
 
-        #loss가 가장 작을때 save하는 걸로 바꿈
+        # Log epoch-level losses to TensorBoard
+        writer.add_scalar('Loss/Epoch_Loss', epoch_loss, epoch)
+        if specs["Articulation"]:
+            writer.add_scalar('Loss/Epoch_Part_Loss', epoch_part_loss, epoch)
+        if do_code_regularization:
+            writer.add_scalar('Loss/Epoch_Reg_Loss', epoch_reg_loss, epoch)
+            
         if epoch in checkpoints:
             save_checkpoints(epoch)
 

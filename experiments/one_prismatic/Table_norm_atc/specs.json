@@ -45,6 +45,5 @@
     "NumAtcParts": 1,
     "NormalizeAtc": true,
     "TrainWithParts": true,
-    "Class": "Table",
-    "Aritculation": true
+    "Class": "Table"
 }

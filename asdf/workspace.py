@@ -30,7 +30,6 @@ training_meshes_subdir = "TrainingMeshes"
 def load_experiment_specifications(experiment_directory):
 
     filename = os.path.join(experiment_directory, specifications_filename)
-
     if not os.path.isfile(filename):
         raise Exception(
             "The experiment directory ({}) does not include specifications file "

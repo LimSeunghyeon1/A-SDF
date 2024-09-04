@@ -45,6 +45,5 @@
     "NumAtcParts": 1,
     "NormalizeAtc": false,
     "TrainWithParts": true,
-    "Class": "TrashCan",
-    "Aritculation": true
+    "Class": "TrashCan"
 }
