@@ -18,6 +18,7 @@ import argparse
 import asdf
 from asdf.utils import *
 import asdf.workspace as ws
+import pkl_dir
 
 def load_checkpoints(continue_from, ws, experiment_directory, lat_vecs, decoder, optimizer_all):
 
@@ -74,21 +75,45 @@ def main_function(experiment_directory, continue_from, batch_split):
     specs = ws.load_experiment_specifications(experiment_directory)
 
     data_source = specs["DataSource"]
-    train_split_file = specs["TrainSplit"]
+    # train_split_file = specs["TrainSplit"]
     arch = __import__("networks." + specs["NetworkArch"], fromlist=["Decoder"])
     latent_size = specs["CodeLength"]
 
     num_epochs = specs["NumEpochs"]
+    normalize_atc = specs["NormalizeAtc"]
     lr_schedules = get_learning_rate_schedules(specs)
     grad_clip = get_spec_with_default(specs, "GradientClipNorm", None)
     if grad_clip is not None:
         logging.debug("clipping gradients to max norm {}".format(grad_clip))
     do_sup_with_part = specs["TrainWithParts"]
+    assert do_sup_with_part, "part should be enabled"
     num_samp_per_scene = specs["SamplesPerScene"]
     clamp_dist = specs["ClampingDistance"]
     minT = -clamp_dist
     maxT = clamp_dist
     enforce_minmax = True
+    mode = specs["Mode"]
+    assert mode.lower() == "double_prismatic" or mode.lower() == "double_revolute"\
+        or mode.lower() == "one_revolute" or mode.lower() == "one_prismatic", mode
+    print("Mode : ", mode)
+    if "one_" in mode:
+        specs["NumAtcParts"] = 1
+    elif "double_" in mode:
+        specs["NumAtcParts"] = 2
+    else:
+        raise NotImplementedError
+    
+    pkl_path = os.path.join("pkl_dir", f"{mode.lower()}.pkl")
+    print("pkl path", pkl_path)
+    
+    if "revolute" in mode:
+        is_revolute = True
+    elif "prismatic" in mode:
+        is_revolute = False
+    else:
+        raise NotImplementedError
+    print("CHANGE num atc to", specs["NumAtcParts"])
+    
 
     do_code_regularization = get_spec_with_default(specs, "CodeRegularization", True)
     code_reg_lambda = get_spec_with_default(specs, "CodeRegularizationLambda", 1e-4)
@@ -108,12 +133,19 @@ def main_function(experiment_directory, continue_from, batch_split):
     checkpoints.sort()
 
     # init dataloader
-    with open(train_split_file, "r") as f:
-        train_split = json.load(f)
+    # with open(train_split_file, "r") as f:
+    #     train_split = json.load(f)
 
-    sdf_dataset = asdf.data.SDFSamples(
-        data_source, train_split, num_samp_per_scene, load_ram=False, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
-
+    '''
+    A-SDF does not support validation so merge train+valid dataset
+    '''
+    sdf_dataset = asdf.data.SDFSamplesBI(
+        data_source=data_source, category=specs['Class'], pkl_path=pkl_path, normalize_atc=normalize_atc, split='trn', subsample=num_samp_per_scene, 
+        load_ram=False, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+    
+    
+    
+    
     scene_per_batch = specs["ScenesPerBatch"]
     num_data_loader_threads =specs["DataLoaderThreads"]
     sdf_loader = data_utils.DataLoader(
@@ -123,16 +155,23 @@ def main_function(experiment_directory, continue_from, batch_split):
         num_workers=0,
         drop_last=True,
     )
+    print("length train loader", len(sdf_loader))
     
+    
+    assert specs["TrainWithParts"], "our datasets must support sdf with labels..."
     # init model and shape codes
     decoder = arch.Decoder(num_atc_parts=specs["NumAtcParts"], do_sup_with_part=specs["TrainWithParts"]).cuda()
     decoder = torch.nn.DataParallel(decoder)
 
-    if specs["Articulation"]==True:
-        num_scenes = specs["NumInstances"]
-    else:
-        num_scenes = len(sdf_dataset)
-    logging.info("There are {} scenes".format(num_scenes))
+    assert decoder
+    #scene index는 pkl 파일 순서로 매긴다.
+    num_scenes = len(sdf_loader)
+    assert num_scenes % 100 == 0, num_scenes
+    num_scenes /= 100
+    assert num_scenes == len(sdf_dataset.id2lat_vec), f"num scenes: {num_scenes}, id2lat_vec: {sdf_dataset.id2lat_vec}, len: {len(sdf_dataset.id2lat_vec)}"
+    
+    
+    logging.info("There are {} train scenes".format(num_scenes))
     lat_vecs = torch.nn.Embedding(num_scenes, latent_size, max_norm=code_bound)
 
     torch.nn.init.normal_(
@@ -185,18 +224,12 @@ def main_function(experiment_directory, continue_from, batch_split):
         decoder.train()
 
         adjust_learning_rate(lr_schedules, optimizer_all, epoch)
-        '''
-        고쳐야할 부분:
-        - num_act_parts i.e. num_act_joints를 max로 해서 0으로 패딩하도록 한다.
-        - prismatic도 같이 구할 수 있도록? 
-        - 
         
-        '''
 
         for all_sdf_data, indices in sdf_loader:
             # Process the input data
             if specs["Articulation"]==True:
-                sdf_data = all_sdf_data[0].reshape(-1, 5)
+                sdf_data = all_sdf_data[0].reshape(-1, 4)
                 atc = all_sdf_data[1].view(-1,specs["NumAtcParts"])
                 instance_idx = all_sdf_data[2].view(-1,1)
                 atc = atc.repeat(1, all_sdf_data[0].size(1)).reshape(-1, specs["NumAtcParts"])
@@ -251,6 +284,7 @@ def main_function(experiment_directory, continue_from, batch_split):
                 else:
                     input = torch.cat([batch_vecs, xyz[i]], dim=1)
 
+                
                 if do_sup_with_part:
                     pred_sdf, pred_part = decoder(input)
                 else:
@@ -287,6 +321,9 @@ def main_function(experiment_directory, continue_from, batch_split):
                 torch.nn.utils.clip_grad_norm_(decoder.parameters(), grad_clip)
 
             optimizer_all.step()
+            
+       
+                
 
         end = time.time()
 
@@ -295,6 +332,7 @@ def main_function(experiment_directory, continue_from, batch_split):
 
         lr_log.append([schedule.get_learning_rate(epoch) for schedule in lr_schedules])
 
+        #loss가 가장 작을때 save하는 걸로 바꿈
         if epoch in checkpoints:
             save_checkpoints(epoch)
 
@@ -308,6 +346,8 @@ def main_function(experiment_directory, continue_from, batch_split):
                 timing_log,
                 epoch,
             )
+        
+        
 
 
 if __name__ == "__main__":

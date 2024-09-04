@@ -1,9 +1,10 @@
 {
-  "Description" : [ "This experiment learns a shape representation for ovens",
+  "Description" : [ "This experiment learns a shape representation for doors",
                     "using data from Shape2Motion." ],
   "DataSource" : "data",
-  "TrainSplit" : "examples/splits/sm_oven_6_angle_train.json",
-  "TestSplit" : "examples/splits/sm_oven_6_angle_test.json",
+  "Mode" : "",
+  "TrainSplit" : "examples/splits/sm_door_6_angle_train.json",
+  "TestSplit" : "examples/splits/sm_door_6_angle_test.json",
   "NetworkArch" : "ASDF_decoder",
   "CodeLength" : 253,
   "NumEpochs" : 1001,
@@ -30,9 +31,12 @@
   "CodeRegularizationLambda" : 1e-4,
   "CodeBound" : 1.0,
   "Articulation" : true,
-  "NumInstances" : 42,
+  "NumInstances" : 92,
   "NumAtcParts" : 1,
+  
+  
+  "NormalizeAtc": false,
   "TrainWithParts" : true,
-  "Class" : "oven"
+  "Class" : "door" 
 }
 

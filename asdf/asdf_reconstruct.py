@@ -251,6 +251,8 @@ def reconstruct(
     infer_with_gt_atc=False,
     num_atc_parts=1,
     do_sup_with_part=False,
+    bi_mode = False,
+    normalize_atc=False,
 ):
     def adjust_learning_rate(
         initial_lr, optimizer, num_iterations, decreased_by, adjust_lr_every
@@ -272,25 +274,48 @@ def reconstruct(
     lat_vec = latent_rand.clone()
     lat_vec.requires_grad = True
     lat_optimizer = torch.optim.Adam([lat_vec], lr=lr)
-
+    if bi_mode:
+        assert not infer_with_gt_atc
+    
+    if not bi_mode:
+        assert not normalize_atc, "check again."
     # init articulation code optimizer
     if infer_with_gt_atc==False:
-        if num_atc_parts==1:
-            if specs["Class"]=='laptop':
-                atc_vec = torch.Tensor([-30]).view(1,1).cuda()
-            elif specs["Class"]=='stapler' or specs["Class"]=='washing_machine' or specs["Class"]=='door' or specs["Class"]=='oven':
-                atc_vec = torch.Tensor([45]).view(1,1).cuda()
-            else:
-                raise Exception("Undefined classes")
-        if num_atc_parts==2:
-            if specs["Class"]=='eyeglasses':
-                atc_vec = torch.Tensor([25, 25]).view(1,2).cuda()
-            elif specs["Class"]=='refrigerator':
-                atc_vec = torch.Tensor([75, 75]).view(1,2).cuda()
-            else:
-                raise Exception("Undefined classes")
-        atc_vec.requires_grad = True
-        atc_optimizer = torch.optim.Adam([atc_vec], lr=lr*1000)
+        if bi_mode:
+            # TODO:min과 max를 미리 불러오고 그 중간 포즈를 initial atc_vec으로 하자.
+            if num_atc_parts == 1:
+                if normalize_atc:
+                    atc_vec = torch.Tensor([0.5]).view(1, 1).cuda()
+                else:
+                    qpos_limit = test_sdf[-1]
+                    atc_vec = torch.Tensor([(qpos_limit[0][0] + qpos_limit[0][1]) / 2.0]).view(1, 1).cuda()
+                    
+            if num_atc_parts == 2:
+                if normalize_atc:
+                    atc_vec = torch.Tensor([0.5, 0.5]).view(1, 2).cuda()
+                else:
+                    qpos_limit = test_sdf[-1]
+                    atc_vec = torch.Tensor([(qpos_limit[0][0] + qpos_limit[0][1]) / 2.0, (qpos_limit[1][0] + qpos_limit[1][1]) / 2.0]).view(1, 2).cuda()
+                    
+            atc_vec.requires_grad = True
+            atc_optimizer = torch.optim.Adam([atc_vec], lr=lr*1000)
+        else:
+            if num_atc_parts==1:
+                if specs["Class"]=='laptop':
+                    atc_vec = torch.Tensor([-30]).view(1,1).cuda()
+                elif specs["Class"]=='stapler' or specs["Class"]=='washing_machine' or specs["Class"]=='door' or specs["Class"]=='oven':
+                    atc_vec = torch.Tensor([45]).view(1,1).cuda()
+                else:
+                    raise Exception("Undefined classes")
+            if num_atc_parts==2:
+                if specs["Class"]=='eyeglasses':
+                    atc_vec = torch.Tensor([25, 25]).view(1,2).cuda()
+                elif specs["Class"]=='refrigerator':
+                    atc_vec = torch.Tensor([75, 75]).view(1,2).cuda()
+                else:
+                    raise Exception("Undefined classes")
+            atc_vec.requires_grad = True
+            atc_optimizer = torch.optim.Adam([atc_vec], lr=lr*1000)
 
     loss_num = 0
     loss_l1 = torch.nn.L1Loss()
@@ -336,7 +361,9 @@ def reconstruct(
             inputs = torch.cat([lat_vecs, xyz, atc_vecs], 1).cuda()
         else:
             inputs = torch.cat([lat_vecs, xyz], 1).cuda()
+        
         if do_sup_with_part:
+        
             pred_sdf, pred_part = decoder(inputs)
         else:
             pred_sdf = decoder(inputs)
@@ -359,13 +386,34 @@ def reconstruct(
     #pos_mask = (torch.sign(pred_sdf)!=torch.sign(sdf_gt)).data & (sdf_gt>0).data
     #neg_mask = (torch.sign(pred_sdf)!=torch.sign(sdf_gt)).data & (sdf_gt<0).data
     #print(torch.sum(pos_mask), torch.sum(neg_mask))
-
+    if bi_mode:
+        assert articulation and not infer_with_gt_atc
     if articulation==True:
         if infer_with_gt_atc:
             return loss_num, None, lat_vec, sdf_data[1].view(1,-1)
         else:
+            if bi_mode:
+                # bi mode일때는 prismatic 일 때랑 revolute이면서 normalize atc일때는 atc_err와 atc_vec을 수정해주어야 함
+                if 'prismatic' in specs['Mode'] and ('revolute' in specs['Mode'] and normalize_atc):
+                    atc_err = torch.abs(atc_vec.detach() - sdf_data[1].cuda())
+                    print("before atc_err", atc_err, "atc vec", atc_vec, "gt", sdf_data[1])
+
+                    qpos_limit_range = qpos_limit[..., 1] - qpos_limit[..., 0]
+                    print("limit range", qpos_limit_range, qpos_limit_range.shape)
+                    atc_err = atc_err * qpos_limit_range
+                    #atc vec도 바꾸어주기
+                    assert len(atc_vec.shape) == 1 and atc_vec.shape[0] == num_atc_parts, atc_vec.shape
+                    atc_vec = atc_vec * qpos_limit_range + qpos_limit[..., 0]
+                    print("after atc_err", atc_err, "atc vec", atc_vec, "gt", sdf_data[1])
+
+                    atc_err = torch.mean(atc_err).cpu().data.numpy()
+                
+                else:
+                    atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
+            else:
+                atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
+                                
             # computer angle pred acc
-            atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
             print(atc_vec)
             return loss_num, atc_err, lat_vec, atc_vec
 
@@ -387,6 +435,8 @@ def reconstruct_ttt(
     infer_with_gt_atc=False,
     num_atc_parts=1,
     do_sup_with_part=False,
+    bi_mode = False,
+    normalize_atc=False,
 ):
     def adjust_learning_rate(
         initial_lr, optimizer, num_iterations, decreased_by, adjust_lr_every
@@ -418,24 +468,48 @@ def reconstruct_ttt(
     
         decoder_optimizer = torch.optim.Adam([{'params': filter(lambda p: p.requires_grad, opt_params)}], lr=0.01*lr)
 
+    if bi_mode:
+        assert not infer_with_gt_atc
+    
+    if not bi_mode:
+        assert not normalize_atc, "check again."
     # init articulation code optimizer
     if infer_with_gt_atc==False:
-        if num_atc_parts==1:
-            if specs["Class"]=='laptop':
-                atc_vec = torch.Tensor([-30]).view(1,1).cuda()
-            elif specs["Class"]=='stapler' or specs["Class"]=='washing_machine' or specs["Class"]=='door' or specs["Class"]=='oven':
-                atc_vec = torch.Tensor([45]).view(1,1).cuda()
-            else:
-                raise Exception("Undefined classes")
-        if num_atc_parts==2:
-            if specs["Class"]=='eyeglasses':
-                atc_vec = torch.Tensor([25, 25]).view(1,2).cuda()
-            elif specs["Class"]=='refrigerator':
-                atc_vec = torch.Tensor([75, 75]).view(1,2).cuda()
-            else:
-                raise Exception("Undefined classes")
-        atc_vec.requires_grad = True
-        atc_optimizer = torch.optim.Adam([atc_vec], lr=1000*lr)
+        if bi_mode:
+            # TODO:min과 max를 미리 불러오고 그 중간 포즈를 initial atc_vec으로 하자.
+            if num_atc_parts == 1:
+                if normalize_atc:
+                    atc_vec = torch.Tensor([0.5]).view(1, 1).cuda()
+                else:
+                    qpos_limit = test_sdf[-1]
+                    atc_vec = torch.Tensor([(qpos_limit[0][0] + qpos_limit[0][1]) / 2.0]).view(1, 1).cuda()
+                    
+            if num_atc_parts == 2:
+                if normalize_atc:
+                    atc_vec = torch.Tensor([0.5, 0.5]).view(1, 2).cuda()
+                else:
+                    qpos_limit = test_sdf[-1]
+                    atc_vec = torch.Tensor([(qpos_limit[0][0] + qpos_limit[0][1]) / 2.0, (qpos_limit[1][0] + qpos_limit[1][1]) / 2.0]).view(1, 2).cuda()
+                    
+            atc_vec.requires_grad = True
+            atc_optimizer = torch.optim.Adam([atc_vec], lr=lr*1000)
+        else:
+            if num_atc_parts==1:
+                if specs["Class"]=='laptop':
+                    atc_vec = torch.Tensor([-30]).view(1,1).cuda()
+                elif specs["Class"]=='stapler' or specs["Class"]=='washing_machine' or specs["Class"]=='door' or specs["Class"]=='oven':
+                    atc_vec = torch.Tensor([45]).view(1,1).cuda()
+                else:
+                    raise Exception("Undefined classes")
+            if num_atc_parts==2:
+                if specs["Class"]=='eyeglasses':
+                    atc_vec = torch.Tensor([25, 25]).view(1,2).cuda()
+                elif specs["Class"]=='refrigerator':
+                    atc_vec = torch.Tensor([75, 75]).view(1,2).cuda()
+                else:
+                    raise Exception("Undefined classes")
+            atc_vec.requires_grad = True
+            atc_optimizer = torch.optim.Adam([atc_vec], lr=lr*1000)
 
     loss_num = 0
     loss_l1 = torch.nn.L1Loss()
@@ -512,20 +586,43 @@ def reconstruct_ttt(
     #neg_mask = (torch.sign(pred_sdf)!=torch.sign(sdf_gt)).data & (sdf_gt<0).data
     #print(torch.sum(pos_mask), torch.sum(neg_mask))
 
+    if bi_mode:
+        assert articulation and not infer_with_gt_atc
     if articulation==True:
         if infer_with_gt_atc:
             return loss_num, None, lat_vec, sdf_data[1].view(1,-1)
         else:
+            if bi_mode:
+                # bi mode일때는 prismatic 일 때랑 revolute이면서 normalize atc일때는 atc_err와 atc_vec을 수정해주어야 함
+                if 'prismatic' in specs['Mode'] and ('revolute' in specs['Mode'] and normalize_atc):
+                    atc_err = torch.abs(atc_vec.detach() - sdf_data[1].cuda())
+                    print("before atc_err", atc_err, "atc vec", atc_vec, "gt", sdf_data[1])
+
+                    qpos_limit_range = qpos_limit[..., 1] - qpos_limit[..., 0]
+                    print("limit range", qpos_limit_range, qpos_limit_range.shape)
+                    atc_err = atc_err * qpos_limit_range
+                    #atc vec도 바꾸어주기
+                    assert len(atc_vec.shape) == 1 and atc_vec.shape[0] == num_atc_parts, atc_vec.shape
+                    atc_vec = atc_vec * qpos_limit_range + qpos_limit[..., 0]
+                    print("after atc_err", atc_err, "atc vec", atc_vec, "gt", sdf_data[1])
+
+                    atc_err = torch.mean(atc_err).cpu().data.numpy()
+                
+                else:
+                    atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
+            else:
+                atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
+                                
             # computer angle pred acc
-            atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
             print(atc_vec)
             return loss_num, atc_err, lat_vec, atc_vec
+
 
     else:
         return loss_num, lat_vec
 
     
-def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epoch, dataset_name):
+def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epoch, dataset_name, bi_mode=False):
 
     # build saving directory
     reconstruction_dir = os.path.join(
@@ -554,27 +651,40 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
     # generate meshes
     for ii, npz in enumerate(npz_filenames):
 
-        if "npz" not in npz:
-            continue
-
-        full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
-
-        if dataset_name=='rbo':
-            data_sdf = asdf.data.read_sdf_samples_into_ram_rbo(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+        if bi_mode:
+            '''
+            bi mode에서는 npz대신 plyfile을 사용합니다.
+            data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
+            '''
+            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, articulation=True, num_atc_parts=specs["NumAtcParts"])
+            print("DATA SDF", data_sdf)
         else:
-            data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+            if "npz" not in npz:
+                continue
+
+            full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
+
+            if dataset_name=='rbo':
+                data_sdf = asdf.data.read_sdf_samples_into_ram_rbo(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+            else:
+                data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
 
         #dataset_name = re.split('/', npz)[-3]
         npz_name = re.split('/', npz)[-1][:-4]
         mesh_filename = os.path.join(reconstruction_meshes_dir, dataset_name, npz_name)
         latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, npz_name + ".pth")
-
-        if (
-            args.skip
-            and os.path.isfile(mesh_filename + ".ply")
-            and os.path.isfile(latent_filename)
-        ):
-            continue
+        print("npz_name", npz_name)
+        print("meshfile name", mesh_filename)
+        print("latent filename", latent_filename)
+        exit(0) # 중간 확인용
+        
+        if not bi_mode:
+            if (
+                args.skip
+                and os.path.isfile(mesh_filename + ".ply")
+                and os.path.isfile(latent_filename)
+            ):
+                continue
 
         logging.info("reconstructing {}".format(npz))
 
@@ -585,25 +695,50 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             data_sdf[0] = data_sdf[0][torch.randperm(data_sdf[0].shape[0])]
             data_sdf[1] = data_sdf[1][torch.randperm(data_sdf[1].shape[0])]
 
+        if bi_mode:
+            assert specs['TrainWithParts']
         start = time.time()
         if specs["Articulation"]==True:
-            err, atc_err, lat_vec, atc_vec = reconstruct(
-                decoder,
-                int(args.iterations),
-                specs["CodeLength"],
-                data_sdf,
-                specs["ClampingDistance"],
-                num_samples=8000,
-                lr=5e-3,
-                l2reg=True,
-                articulation=specs["Articulation"],
-                specs=specs,
-                infer_with_gt_atc=args.infer_with_gt_atc,
-                num_atc_parts=specs["NumAtcParts"],
-                do_sup_with_part=specs["TrainWithParts"],
-            )
+            
+            if bi_mode:
+                #bi mode에서는 normalize_atc 이면 revolute도 qpos_limit에 따라 계산을 달리 해주어야 한다.
+                err, atc_err, lat_vec, atc_vec = reconstruct(
+                    decoder,
+                    int(args.iterations),
+                    specs["CodeLength"],
+                    data_sdf,
+                    specs["ClampingDistance"],
+                    num_samples=8000,
+                    lr=5e-3,
+                    l2reg=True,
+                    articulation=specs["Articulation"],
+                    specs=specs,
+                    infer_with_gt_atc=args.infer_with_gt_atc,
+                    num_atc_parts=specs["NumAtcParts"],
+                    do_sup_with_part=specs["TrainWithParts"],
+                    normalize_atc = specs['NormalizeAtc'],
+                    bi_mode=True
+                )
+            else:
+                err, atc_err, lat_vec, atc_vec = reconstruct(
+                    decoder,
+                    int(args.iterations),
+                    specs["CodeLength"],
+                    data_sdf,
+                    specs["ClampingDistance"],
+                    num_samples=8000,
+                    lr=5e-3,
+                    l2reg=True,
+                    articulation=specs["Articulation"],
+                    specs=specs,
+                    infer_with_gt_atc=args.infer_with_gt_atc,
+                    num_atc_parts=specs["NumAtcParts"],
+                    do_sup_with_part=specs["TrainWithParts"],
+                )
+            
 
         else:
+            assert not bi_mode
             err, lat_vec = reconstruct(
                 decoder,
                 int(args.iterations),
@@ -620,9 +755,15 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
                 do_sup_with_part=False,
             )
             atc_vec = None
+            
+        if bi_mode:
+            assert (not args.infer_with_gt_atc) and specs["Articulation"]
 
         if specs["Articulation"]==True and args.infer_with_gt_atc==False:
+            
             print("err: ", err, "atc_err: ", atc_err)
+            
+            
             atc_err_sum += atc_err
             err_sum += err
             print("err avg: ", err_sum/(ii+1), "atc_err avg: ", atc_err_sum/(ii+1))
@@ -630,16 +771,18 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             err_sum += err
             print("err avg: ", err_sum/(ii+1))
 
-        if not os.path.exists(os.path.dirname(mesh_filename)):
-            os.makedirs(os.path.dirname(mesh_filename))
+        if not bi_mode:
+            # bi mode에서는 reconstruction안함
+            if not os.path.exists(os.path.dirname(mesh_filename)):
+                os.makedirs(os.path.dirname(mesh_filename))
 
-        if not save_latvec_only:
-            start = time.time()
-            with torch.no_grad():
-                asdf.mesh.create_mesh(
-                    decoder, lat_vec, mesh_filename, N=256, max_batch=int(2 ** 18), atc_vec=atc_vec, do_sup_with_part=specs["TrainWithParts"], specs=specs,
-                )
-            logging.info("total time: {}".format(time.time() - start))
+            if not save_latvec_only:
+                start = time.time()
+                with torch.no_grad():
+                    asdf.mesh.create_mesh(
+                        decoder, lat_vec, mesh_filename, N=256, max_batch=int(2 ** 18), atc_vec=atc_vec, do_sup_with_part=specs["TrainWithParts"], specs=specs,
+                    )
+                logging.info("total time: {}".format(time.time() - start))
 
         if not os.path.exists(os.path.dirname(latent_filename)):
             os.makedirs(os.path.dirname(latent_filename))
@@ -649,9 +792,13 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             print("save atc npy: ", latent_filename[:-4]+'.npy', atc_vec.detach().cpu().numpy())
             with open(latent_filename[:-4]+'.npy', 'wb') as f:
                 np.save(f, atc_vec.detach().cpu().numpy())
+            
+            if bi_mode: # atc 에러도 추가
+                with open(latent_filename[:-4]+'_atc_err.npy', 'wb') as f:
+                    np.save(f, atc_err.detach().cpu().numpy())
 
 
-def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model_state, dataset_name):
+def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model_state, dataset_name, bi_mode=False):
 
     # build saving directory
     reconstruction_dir = os.path.join(
@@ -686,17 +833,32 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
     # generate meshes
     for ii, npz in enumerate(npz_filenames):
 
-        if "npz" not in npz:
-            continue
-
         decoder.load_state_dict(saved_model_state["model_state_dict"])
 
-        full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
-
-        if dataset_name=='rbo':
-            data_sdf = asdf.data.read_sdf_samples_into_ram_rbo(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+        if bi_mode:
+            '''
+            bi mode에서는 npz대신 plyfile을 사용합니다.
+            data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
+            '''
+            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, articulation=True, num_atc_parts=specs["NumAtcParts"])
+            print("DATA SDF", data_sdf)
         else:
-            data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+            if "npz" not in npz:
+                continue
+
+            full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
+
+            if dataset_name=='rbo':
+                data_sdf = asdf.data.read_sdf_samples_into_ram_rbo(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+            else:
+                data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+        # if "npz" not in npz:
+        #     continue
+        # full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
+        # if dataset_name=='rbo':
+        #     data_sdf = asdf.data.read_sdf_samples_into_ram_rbo(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+        # else:
+        #     data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
 
         #dataset_name = re.split('/', npz)[-3]
         npz_name = re.split('/', npz)[-1][:-4]
@@ -704,39 +866,64 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
         latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, npz_name + ".pth")
         model_filename = os.path.join(reconstruction_models_dir, dataset_name, npz_name + ".pth")
 
-        if (
-            args.skip
-            and os.path.isfile(mesh_filename + ".ply")
-            and os.path.isfile(latent_filename)
-        ):
-            continue
+        print("npz_name", npz_name)
+        print("meshfile name", mesh_filename)
+        print("latent filename", latent_filename)
+        exit(0) # 중간 확인용
+        if not bi_mode:
+            if (
+                args.skip
+                and os.path.isfile(mesh_filename + ".ply")
+                and os.path.isfile(latent_filename)
+            ):
+                continue
 
         logging.info("reconstructing {}".format(npz))
 
         if specs["Articulation"]==True:
             data_sdf[0][0] = data_sdf[0][0][torch.randperm(data_sdf[0][0].shape[0])]
             data_sdf[0][1] = data_sdf[0][1][torch.randperm(data_sdf[0][1].shape[0])]
+            print("data_sdf", data_sdf)
         else:
             data_sdf[0] = data_sdf[0][torch.randperm(data_sdf[0].shape[0])]
             data_sdf[1] = data_sdf[1][torch.randperm(data_sdf[1].shape[0])]
+        
 
         start = time.time()
         if specs["Articulation"]==True:
-            err, atc_err, lat_vec, atc_vec = reconstruct_ttt(
-                decoder,
-                int(args.iterations),
-                specs["CodeLength"],
-                data_sdf,
-                specs["ClampingDistance"],
-                num_samples=8000,
-                lr=5e-3,
-                l2reg=True,
-                articulation=specs["Articulation"],
-                specs=specs,
-                infer_with_gt_atc=args.infer_with_gt_atc,
-                num_atc_parts=specs["NumAtcParts"],
-                do_sup_with_part=specs["TrainWithParts"],
-            )
+            if bi_mode:
+                err, atc_err, lat_vec, atc_vec = reconstruct_ttt(
+                    decoder,
+                    int(args.iterations),
+                    specs["CodeLength"],
+                    data_sdf,
+                    specs["ClampingDistance"],
+                    num_samples=8000,
+                    lr=5e-3,
+                    l2reg=True,
+                    articulation=specs["Articulation"],
+                    specs=specs,
+                    infer_with_gt_atc=args.infer_with_gt_atc,
+                    num_atc_parts=specs["NumAtcParts"],
+                    do_sup_with_part=specs["TrainWithParts"],
+                    normalize_atc = specs['NormalizeAtc'],
+                    bi_mode=True
+                )
+            else:
+                err, atc_err, lat_vec, atc_vec = reconstruct_ttt(
+                    decoder,
+                    int(args.iterations),
+                    specs["CodeLength"],
+                    data_sdf,
+                    specs["ClampingDistance"],
+                    num_samples=8000,
+                    lr=5e-3,
+                    l2reg=True,
+                    articulation=specs["Articulation"],
+                    specs=specs,
+                    infer_with_gt_atc=args.infer_with_gt_atc,
+                    num_atc_parts=specs["NumAtcParts"],
+                )
 
         else:
             err, lat_vec = reconstruct_ttt(
@@ -754,6 +941,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
                 num_atc_parts=specs["NumAtcParts"],
                 do_sup_with_part=False,
             )
+                
             atc_vec = None
 
         if specs["Articulation"]==True and args.infer_with_gt_atc==False:

@@ -63,9 +63,10 @@ class Decoder(nn.Module):
 
     # input: N x (L+3+num_atc_parts)
     def forward(self, input):
+        xyz_atc = input[:, -(self.num_atc_parts+3):].clone() # xyz + articulation (3+1)
+        # xyz_atc[:,3:] = xyz_atc[:,3:]/100,number of actionable parts가 사전에 정의되어야 한다.
+        xyz_atc[:,3:] = xyz_atc[:,3:].clone() / 100
 
-        xyz_atc = input[:, -(self.num_atc_parts+3):] # xyz + articulation (3+1)
-        xyz_atc[:,3:] = xyz_atc[:,3:]/100
         xyz_atc = self.fc1(xyz_atc)
         atc_emb = self.relu(xyz_atc)
 
