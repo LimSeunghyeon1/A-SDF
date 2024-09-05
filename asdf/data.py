@@ -125,7 +125,7 @@ def read_sdf_samples_into_ram(filename, articulation=False, num_atc_parts=1):
     else:
         return [pos_tensor, neg_tensor]
 
-def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
+def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, num_atc_parts=1):
     '''
     plyfile을 읽는다.
     '''
@@ -207,7 +207,6 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
     atc = np.zeros((num_atc_parts))
     atc_limit = np.zeros((num_atc_parts, 2))
     
-    assert len(list(joint_dict.values())) == num_atc_parts, joint_dict
     for joint_info in joint_dict.values():
         # parent link와 child link 탐색하고, num_atc parts가=1이면 1,2 num_atc_parts=2이면 1,2,3만본다.
         p_idx = joint_info['parent_link']['index']
@@ -238,7 +237,7 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
                 # 정규화 된 값이 아닌 실제 값을 집어넣는다.
-                if joint_info['type'] == 'prismatic':
+                if normalize_atc or joint_info['type'] == 'prismatic':
                     atc[0] = qpos - joint_info['qpos_limit'][0]
                     atc_limit[0][0] = joint_info['qpos_limit'][0]
                     atc_limit[0][1] = joint_info['qpos_limit'][1]
@@ -261,7 +260,7 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
-                if joint_info['type'] == 'prismatic':
+                if normalize_atc or joint_info['type'] == 'prismatic':
                     atc[0] = qpos - joint_info['qpos_limit'][0]
                     atc_limit[0][0] = joint_info['qpos_limit'][0]
                     atc_limit[0][1] = joint_info['qpos_limit'][1]
@@ -274,7 +273,7 @@ def read_sdf_samples_into_ram_bi(filename, articulation=False, num_atc_parts=1):
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
-                if joint_info['type'] == 'prismatic':
+                if normalize_atc or joint_info['type'] == 'prismatic':
                     atc[1] = qpos - joint_info['qpos_limit'][0]
                     atc_limit[1][0] = joint_info['qpos_limit'][0]
                     atc_limit[1][1] = joint_info['qpos_limit'][1]

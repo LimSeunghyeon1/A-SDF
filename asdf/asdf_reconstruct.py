@@ -681,7 +681,7 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             bi mode에서는 npz대신 plyfile을 사용합니다.
             data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
             '''
-            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, articulation=True, num_atc_parts=specs["NumAtcParts"])
+            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"])
         else:
             if "npz" not in npz:
                 continue
@@ -864,7 +864,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
             bi mode에서는 npz대신 plyfile을 사용합니다.
             data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
             '''
-            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, articulation=True, num_atc_parts=specs["NumAtcParts"])
+            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"])
         else:
             if "npz" not in npz:
                 continue

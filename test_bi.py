@@ -190,7 +190,15 @@ if __name__ == "__main__":
         default="shape2motion",
         help="shape2motion/shape2motion-1-view/real(for laptop only)",
     )
-    
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
+
+    # GPU에서 실행할 경우 추가로 시드 고정
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(0)
+        torch.cuda.manual_seed_all(0) 
+        
     # args and specs
     asdf.add_common_args(arg_parser)
     args = arg_parser.parse_args()
