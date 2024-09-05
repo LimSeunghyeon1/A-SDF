@@ -23,6 +23,7 @@ def test(args, ws, specs):
     
     #decoder = arch.Decoder(latent_size, **specs["NetworkSpecs"], articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"], do_sup_with_part=specs["TrainWithParts"]).cuda()
     decoder = arch.Decoder(latent_size, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"], do_sup_with_part=specs["TrainWithParts"]).cuda()
+    assert specs["TrainWithParts"]
     decoder = torch.nn.DataParallel(decoder)
     decoder.eval()
 

@@ -165,8 +165,6 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
             to_change = to_switch_label[obj_idx][ul-1]+1
             if to_switch_label[obj_idx][ul-1] != -100:
                 new_label[label == ul] = to_change
-                print("instance", obj_idx, "change", ul, "to", to_change)
-        exit(0)
     else:
         # <= num_atc_parts+1인것들 저장
         for i in range(num_atc_parts+2):
@@ -237,7 +235,7 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
                 # 정규화 된 값이 아닌 실제 값을 집어넣는다.
-                if normalize_atc or joint_info['type'] == 'prismatic':
+                if normalize_atc:
                     atc[0] = qpos - joint_info['qpos_limit'][0]
                     atc_limit[0][0] = joint_info['qpos_limit'][0]
                     atc_limit[0][1] = joint_info['qpos_limit'][1]
@@ -245,22 +243,14 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
                     atc[0] = (qpos - joint_info['qpos_limit'][0])* 180 / np.pi 
                     atc_limit[0][0] = joint_info['qpos_limit'][0] * 180 / np.pi
                     atc_limit[0][1] = joint_info['qpos_limit'][1] * 180 / np.pi
-                # if normalize_atc or joint_info['type'] == 'prismatic':
-                #     qpos_normalized = (joint_info['qpos'] - joint_info['qpos_limit'][0]) / qpos_range
-                #     atc[0] = qpos_normalized
-                # else:
-                #     assert joint_info['type'] == 'revolute_unwrapped', joint_info['type']
-                #     #형식에 맞게 degree로 바꾸어줌
-                #     #minimum 0로 하기
-                #     # atc[0] = qpos - joint_info['qpos_limit'][0]
-                #     atc[0] = (qpos - joint_info['qpos_limit'][0]) * 180 / np.pi
+           
         else:
             # 베이스(1)에 두가지가 연결된 상태
             if (p_idx == 1 and c_idx == 2) or (p_idx == 2 and c_idx == 1):
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
-                if normalize_atc or joint_info['type'] == 'prismatic':
+                if normalize_atc:
                     atc[0] = qpos - joint_info['qpos_limit'][0]
                     atc_limit[0][0] = joint_info['qpos_limit'][0]
                     atc_limit[0][1] = joint_info['qpos_limit'][1]
@@ -273,7 +263,7 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
-                if normalize_atc or joint_info['type'] == 'prismatic':
+                if normalize_atc:
                     atc[1] = qpos - joint_info['qpos_limit'][0]
                     atc_limit[1][0] = joint_info['qpos_limit'][0]
                     atc_limit[1][1] = joint_info['qpos_limit'][1]
@@ -327,7 +317,6 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
             to_change = to_switch_label[obj_idx][ul-1]+1
             if to_switch_label[obj_idx][ul-1] != -100:
                 new_label[label == ul] = to_change
-                print("instance", obj_idx, "change", ul, "to", to_change)
     else:
         # <= num_atc_parts+1인것들 저장
         for i in range(num_atc_parts+2):
@@ -376,14 +365,12 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
         if obj_idx in to_switch_label:
             to_p_change = to_switch_label[obj_idx][p_idx-1]+1
             if to_switch_label[obj_idx][p_idx-1] != -100:
-                print("p_idx change to", p_idx, "to", to_p_change)
                 p_idx = to_p_change
             else:
                 p_idx = -100
             
             to_c_change = to_switch_label[obj_idx][c_idx-1]+1
             if to_switch_label[obj_idx][c_idx-1] != -100:
-                print("c_idx change to", c_idx, "to", to_c_change)
                 c_idx = to_c_change
             else:
                 c_idx = -100
@@ -395,12 +382,13 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
-                if normalize_atc or joint_info['type'] == 'prismatic':
+                if normalize_atc:
                     qpos_normalized = (joint_info['qpos'] - joint_info['qpos_limit'][0]) / qpos_range
                     atc[0] = qpos_normalized
+                
                 else:
-                    assert joint_info['type'] == 'revolute_unwrapped', joint_info['type']
                     #형식에 맞게 degree로 바꾸어줌
+                    #prismatic도 degree로 치환해서 하더라 from CARTO
                     #minimum 0로 하기
                     # atc[0] = qpos - joint_info['qpos_limit'][0]
                     atc[0] = (qpos - joint_info['qpos_limit'][0]) * 180 / np.pi
@@ -410,28 +398,27 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
-                if normalize_atc or joint_info['type'] == 'prismatic':
+                if normalize_atc:
                     qpos_normalized = (joint_info['qpos'] - joint_info['qpos_limit'][0]) / qpos_range
                     atc[0] = qpos_normalized
+                
                 else:
                     #형식에 맞게 degree로 바꾸어줌
-                    assert joint_info['type'] == 'revolute_unwrapped', joint_info['type'] 
                     atc[0] = (qpos - joint_info['qpos_limit'][0]) * 180 / np.pi
                     # atc[0] = qpos - joint_info['qpos_limit'][0]
             elif (p_idx == 1 and c_idx == 3) or (p_idx == 3 and c_idx == 1):
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
-                if normalize_atc or joint_info['type'] == 'prismatic':
+                if normalize_atc:
                     qpos_normalized = (joint_info['qpos'] - joint_info['qpos_limit'][0]) / qpos_range
                     atc[1] = qpos_normalized
+            
                 else:
                     #형식에 맞게 degree로 바꾸어줌
-                    assert joint_info['type'] == 'revolute_unwrapped', joint_info['type']
                     atc[1] = (qpos - joint_info['qpos_limit'][0]) * 180 / np.pi
                     # else:
                     #     atc[1] = qpos - joint_info['qpos_limit'][0]
-        
     assert np.all(atc != 0), atc 
             
     assert articulation
