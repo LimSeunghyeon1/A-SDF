@@ -429,8 +429,13 @@ def reconstruct(
                     atc_err = torch.mean(atc_err).cpu().data.numpy()
                 
                 else:
-                    print("===============atc vec", atc_vec, "// gt", sdf_data[1], "===================")
-                    atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
+                    
+                    atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda() )).cpu().data.numpy()
+                    if 'prismatic' in specs['Mode']:
+                        #원래 m단위로 디코딩
+                        atc_vec = atc_vec / 180 * np.pi
+                        atc_err = atc_err / 180 * np.pi
+
             else:
                 atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
                                 
