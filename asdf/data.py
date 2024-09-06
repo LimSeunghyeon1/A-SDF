@@ -14,6 +14,8 @@ import re
 from plyfile import PlyData
 import json
 from tools.switch_label import to_switch_label
+import time
+
 
 
 
@@ -273,9 +275,9 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
                     atc_limit[1][1] = joint_info['qpos_limit'][1] * 180 / np.pi
     
         
-        print("atc", atc)
-        print("atc limit", atc_limit)
-        assert np.all(atc != 0), atc 
+    print("atc", atc)
+    print("atc limit", atc_limit)
+    assert np.all(atc != 0), atc 
     assert articulation
     
     

@@ -76,6 +76,11 @@ python train.py -e examples/laptop/laptop-asdf/
 python train_bi.py -e experiments/one_revolute/Door/
 ```
 
+- ddp version
+```
+python -m torch.distributed.run --nproc_per_node={num_gpus} train_bi_ddp.py  -e experiments/double_revolute/Eyeglasses/
+```
+
 
 ## (b) Reconstruction
 
