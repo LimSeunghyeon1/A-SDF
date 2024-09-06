@@ -641,6 +641,11 @@ def reconstruct_ttt(
                 
                 else:
                     atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
+                    if 'prismatic' in specs['Mode']:
+                        #원래 m단위로 디코딩
+                        atc_vec = atc_vec / 180 * np.pi
+                        atc_err = atc_err / 180 * np.pi
+
             else:
                 atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
                                 

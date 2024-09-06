@@ -236,7 +236,6 @@ def main_function(experiment_directory, continue_from, batch_split):
             batch_loss = 0.0
 
             optimizer_all.zero_grad()
-            print("instance idx", instance_idx)
 
             for i in range(batch_split):
 
