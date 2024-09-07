@@ -261,7 +261,7 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
                     atc_limit[0][0] = joint_info['qpos_limit'][0] * 180 / np.pi
                     atc_limit[0][1] = joint_info['qpos_limit'][1] * 180 / np.pi
             
-            elif (p_idx == 1 and c_idx == 3) or (p_idx == 3 and c_idx == 1):
+            elif (p_idx == 1 and c_idx == 3) or (p_idx == 3 and c_idx == 1) or (p_idx == 2 and c_idx == 3) or (p_idx == 3 and c_idx == 2):
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']
@@ -408,7 +408,7 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
                     #형식에 맞게 degree로 바꾸어줌
                     atc[0] = (qpos - joint_info['qpos_limit'][0]) * 180 / np.pi
                     # atc[0] = qpos - joint_info['qpos_limit'][0]
-            elif (p_idx == 1 and c_idx == 3) or (p_idx == 3 and c_idx == 1):
+            elif (p_idx == 1 and c_idx == 3) or (p_idx == 3 and c_idx == 1) or (p_idx == 2 and c_idx == 3) or (p_idx == 3 and c_idx == 2):
                 qpos_range = joint_info['qpos_limit'][1] - joint_info['qpos_limit'][0]
                 assert np.isfinite(qpos_range), "We only consider for this experiment"
                 qpos = joint_info['qpos']

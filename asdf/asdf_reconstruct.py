@@ -11,6 +11,8 @@ import re
 
 import asdf
 import asdf.workspace as ws
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 def sample_uniform_points_in_unit_sphere(amount):
     unit_sphere_points = np.random.uniform(-1, 1, size=(amount * 2 + 20, 3))
@@ -685,8 +687,8 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
     save_latvec_only = False
 
     # generate meshes
-    for ii, npz in enumerate(npz_filenames):
-
+    for ii, npz in enumerate(tqdm(npz_filenames)):
+        
         if bi_mode:
             dataset_name = "partnet_mobility"
             '''
@@ -841,6 +843,13 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             if bi_mode: # atc 에러도 추가
                 with open(latent_filename[:-4]+'_atc_err.npy', 'wb') as f:
                     np.save(f, atc_err)
+    
+    if bi_mode:
+        print("파이널 에러 저장")
+        final_filename = os.path.join('/'.join(latent_filename.split('/')[:-1]), 'final_atc_err.npy')
+        print("PRINT final", final_filename, "ERR SUM", float(err_sum) / len(npz_filenames))
+        with open(final_filename, 'wb') as f:
+            np.save(f, float(err_sum) / len(npz_filenames))
 
 
 def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model_state, dataset_name, bi_mode=False):
@@ -1022,6 +1031,14 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
             if bi_mode: # atc 에러도 추가
                 with open(latent_filename[:-4]+'_atc_err.npy', 'wb') as f:
                     np.save(f, atc_err)
+        
+    
+    if bi_mode:
+        print("파이널 에러 저장")
+        final_filename = os.path.join('/'.join(latent_filename.split('/')[:-1]), 'final_atc_err.npy')
+        print("PRINT final", final_filename, "ERR SUM", float(err_sum) / len(npz_filenames))
+        with open(final_filename, 'wb') as f:
+            np.save(f, float(err_sum) / len(npz_filenames))
 
 
 def generation(args, ws, specs, decoder, reconstruction_codes_dir, saved_model_epoch, dataset_name='shape2motion'):
