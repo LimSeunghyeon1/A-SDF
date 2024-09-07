@@ -691,23 +691,6 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
         
         if bi_mode:
             dataset_name = "partnet_mobility"
-            '''
-            bi mode에서는 npz대신 plyfile을 사용합니다.
-            data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
-            '''
-            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"])
-        else:
-            if "npz" not in npz:
-                continue
-
-            full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
-
-            if dataset_name=='rbo':
-                data_sdf = asdf.data.read_sdf_samples_into_ram_rbo(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
-            else:
-                data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
-
-        if bi_mode:
             inst, pose_idx = npz.split('/')[-3:-1]
             latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, '_'.join([inst, pose_idx])+ ".pth")
             print("latent filename", latent_filename)
@@ -726,6 +709,34 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
                 and os.path.isfile(latent_filename)
             ):
                 continue
+            
+        if os.path.isfile(latent_filename[:-4]+'.npy') and os.path.isfile(latent_filename[:-4]+'_atc_err.npy'):
+            # NOTICE: SKIP은 atc_err_sum만 생각하고, err_sum은 다시 복구 안함!!!
+            print("SKIP", latent_filename[:-4])
+            
+            atc_err = np.load(latent_filename[:-4]+'_atc_err.npy')
+            atc_err_sum += atc_err            
+            continue
+        
+        if bi_mode:
+            
+            '''
+            bi mode에서는 npz대신 plyfile을 사용합니다.
+            data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
+            '''
+            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"])
+        else:
+            if "npz" not in npz:
+                continue
+
+            full_filename = os.path.join(args.data_source, ws.sdf_samples_subdir, npz)
+
+            if dataset_name=='rbo':
+                data_sdf = asdf.data.read_sdf_samples_into_ram_rbo(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+            else:
+                data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
+
+        
             
 
         logging.info("reconstructing {}".format(npz))
@@ -847,9 +858,9 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
     if bi_mode:
         print("파이널 에러 저장")
         final_filename = os.path.join('/'.join(latent_filename.split('/')[:-1]), 'final_atc_err.npy')
-        print("PRINT final", final_filename, "ERR SUM", float(err_sum) / len(npz_filenames))
+        print("PRINT final", final_filename, "ERR SUM", float(atc_err_sum) / len(npz_filenames))
         with open(final_filename, 'wb') as f:
-            np.save(f, float(err_sum) / len(npz_filenames))
+            np.save(f, float(atc_err_sum) / len(npz_filenames))
 
 
 def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model_state, dataset_name, bi_mode=False):
@@ -884,12 +895,45 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
     save_latvec_only = False
 
     # generate meshes
-    for ii, npz in enumerate(npz_filenames):
-
+    for ii, npz in enumerate(tqdm(npz_filenames)):
+        if bi_mode:
+            dataset_name = "partnet_mobility"
+            
+            npz_name  = re.split('/', npz)[-1][:-4]
+            mesh_filename = os.path.join(reconstruction_meshes_dir, dataset_name, npz_name)
+            model_filename = os.path.join(reconstruction_models_dir, dataset_name, npz_name + ".pth")
+            
+            inst, pose_idx = npz.split('/')[-3:-1]
+            latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, '_'.join([inst, pose_idx])+ ".pth")
+            print("latent filename", latent_filename)
+        else:
+            dataset_name = re.split('/', npz)[-3]
+            npz_name = re.split('/', npz)[-1][:-4]
+            model_filename = os.path.join(reconstruction_models_dir, dataset_name, npz_name + ".pth")
+            mesh_filename = os.path.join(reconstruction_meshes_dir, dataset_name, npz_name)
+            latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, npz_name + ".pth")
+            print("npz_name", npz_name)
+            print("meshfile name", mesh_filename)
+            print("latent filename", latent_filename)
+            if (
+                args.skip
+                and os.path.isfile(mesh_filename + ".ply")
+                and os.path.isfile(latent_filename)
+            ):
+                continue
+            
+        if os.path.isfile(latent_filename[:-4]+'.npy') and os.path.isfile(latent_filename[:-4]+'_atc_err.npy'):
+            # NOTICE: SKIP은 atc_err_sum만 생각하고, err_sum은 다시 복구 안함!!!
+            print("SKIP", latent_filename[:-4])
+            
+            atc_err = np.load(latent_filename[:-4]+'_atc_err.npy')
+            atc_err_sum += atc_err            
+            continue
+        
         decoder.load_state_dict(saved_model_state["model_state_dict"])
 
         if bi_mode:
-            dataset_name = "partnet_mobility"
+            # dataset_name = "partnet_mobility"
             
             '''
             bi mode에서는 npz대신 plyfile을 사용합니다.
@@ -915,10 +959,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
         #     data_sdf = asdf.data.read_sdf_samples_into_ram(full_filename, articulation=specs["Articulation"], num_atc_parts=specs["NumAtcParts"])
 
         #dataset_name = re.split('/', npz)[-3]
-        npz_name = re.split('/', npz)[-1][:-4]
-        mesh_filename = os.path.join(reconstruction_meshes_dir, dataset_name, npz_name)
-        latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, npz_name + ".pth")
-        model_filename = os.path.join(reconstruction_models_dir, dataset_name, npz_name + ".pth")
+        
 
         print("npz_name", npz_name)
         print("meshfile name", mesh_filename)
@@ -1019,11 +1060,11 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
 
         if not os.path.exists(os.path.dirname(latent_filename)):
             os.makedirs(os.path.dirname(latent_filename))
-        if not os.path.exists(os.path.dirname(model_filename)):
-            os.makedirs(os.path.dirname(model_filename))
+        # if not os.path.exists(os.path.dirname(model_filename)):
+        #     os.makedirs(os.path.dirname(model_filename))
 
         torch.save(lat_vec.unsqueeze(0), latent_filename)
-        torch.save(decoder.state_dict(), model_filename)
+        # torch.save(decoder.state_dict(), model_filename)
         if specs["Articulation"]==True:
             print("save atc npy: ", latent_filename[:-4]+'.npy', atc_vec.detach().cpu().numpy())
             with open(latent_filename[:-4]+'.npy', 'wb') as f:
@@ -1036,9 +1077,9 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
     if bi_mode:
         print("파이널 에러 저장")
         final_filename = os.path.join('/'.join(latent_filename.split('/')[:-1]), 'final_atc_err.npy')
-        print("PRINT final", final_filename, "ERR SUM", float(err_sum) / len(npz_filenames))
+        print("PRINT final", final_filename, "ERR SUM", float(atc_err_sum) / len(npz_filenames))
         with open(final_filename, 'wb') as f:
-            np.save(f, float(err_sum) / len(npz_filenames))
+            np.save(f, float(atc_err_sum) / len(npz_filenames))
 
 
 def generation(args, ws, specs, decoder, reconstruction_codes_dir, saved_model_epoch, dataset_name='shape2motion'):
