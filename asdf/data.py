@@ -13,7 +13,7 @@ import asdf.workspace as ws
 import re
 from plyfile import PlyData
 import json
-from tools.switch_label import to_switch_label
+from tools_asdf.switch_label import to_switch_label
 import time
 
 
