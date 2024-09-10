@@ -6,8 +6,8 @@ import multiprocessing
 modes = ["double_revolute", "one_revolute", "one_prismatic"]
 
 categories = {
-    # "double_revolute": ['Eyeglasses', "Refrigerator", "Stapler", "StorageFurniture", "TrashCan"],
-    "double_revolute": ['Eyeglasses', "Refrigerator",  "StorageFurniture", "TrashCan"],
+    "double_revolute": ['Eyeglasses', "Refrigerator", "Stapler", "StorageFurniture", "TrashCan"],
+    # "double_revolute": ['Eyeglasses', "Refrigerator",  "StorageFurniture", "TrashCan"],
     "one_prismatic": ["StorageFurniture", "Table", "Toaster"],
     "one_revolute": ["Box", "Dishwasher", "Door", "Laptop", "Microwave", "Oven", "Pliers", "Refrigerator", "Scissors", "StorageFurniture", "TrashCan"]
 }
@@ -17,7 +17,7 @@ def run_process(mode, category, gpu_id):
     specs_path = os.path.join('experiments', mode, category)
     
     # CUDA_VISIBLE_DEVICES 환경 변수 설정하여 GPU 지정
-    command = f'CUDA_VISIBLE_DEVICES={gpu_id} python test_bi.py -e {specs_path} -c 1000 -m recon_testset && python test_bi.py -e {specs_path} -c 1000 -m recon_testset_ttt'
+    command = f'CUDA_VISIBLE_DEVICES={gpu_id} python test_bi.py -e {specs_path} -c 1000 -m recon_testset && CUDA_VISIBLE_DEVICES={gpu_id} python test_bi.py -e {specs_path} -c 1000 -m recon_testset_ttt'
     print(f"STARTING: {command}")
     
     # Error handling for subprocess
