@@ -13,6 +13,7 @@ import asdf
 import asdf.workspace as ws
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import pandas as pd
 
 def sample_uniform_points_in_unit_sphere(amount):
     unit_sphere_points = np.random.uniform(-1, 1, size=(amount * 2 + 20, 3))
@@ -433,17 +434,20 @@ def reconstruct(
                 else:
                     
                     atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda() )).cpu().data.numpy()
+                    
                     if 'prismatic' in specs['Mode']:
                         #원래 m단위로 디코딩
                         atc_vec = atc_vec / 180 * np.pi
                         atc_err = atc_err / 180 * np.pi
+                        gt_vec = sdf_data[1] / 180 * np.pi
+                        qpos_limit = qpos_limit / 180 * np.pi
 
             else:
                 atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
                                 
             # computer angle pred acc
             print(atc_vec)
-            return loss_num, atc_err, lat_vec, atc_vec
+            return loss_num, atc_err, lat_vec, atc_vec, gt_vec, qpos_limit
 
     else:
         return loss_num, lat_vec
@@ -647,13 +651,15 @@ def reconstruct_ttt(
                         #원래 m단위로 디코딩
                         atc_vec = atc_vec / 180 * np.pi
                         atc_err = atc_err / 180 * np.pi
+                        gt_vec = sdf_data[1] / 180 * np.pi
+                        qpos_limit = qpos_limit / 180 * np.pi
 
             else:
                 atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
                                 
             # computer angle pred acc
             print(atc_vec)
-            return loss_num, atc_err, lat_vec, atc_vec
+            return loss_num, atc_err, lat_vec, atc_vec, gt_vec, qpos_limit
 
 
     else:
@@ -685,14 +691,23 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
     err_sum = 0.0
     atc_err_sum = 0.0
     save_latvec_only = False
-
+    csv_list = []
     # generate meshes
     for ii, npz in enumerate(tqdm(npz_filenames)):
-        
+        data_dict = {}
+
         if bi_mode:
             dataset_name = "partnet_mobility"
+            csv_path = os.path.join(reconstruction_codes_dir, dataset_name, "result.csv") 
+            npz_name = re.split('/', npz)[-1][:-4]
+            
             inst, pose_idx = npz.split('/')[-3:-1]
+            mesh_filename = os.path.join(reconstruction_meshes_dir, dataset_name, npz_name)
+            
+            
             latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, '_'.join([inst, pose_idx])+ ".pth")
+            data_dict['instance'] = int(inst)
+            data_dict['pose_idx'] = pose_idx
             print("latent filename", latent_filename)
         else:
             dataset_name = re.split('/', npz)[-3]
@@ -710,13 +725,13 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             ):
                 continue
             
-        if os.path.isfile(latent_filename[:-4]+'.npy') and os.path.isfile(latent_filename[:-4]+'_atc_err.npy'):
-            # NOTICE: SKIP은 atc_err_sum만 생각하고, err_sum은 다시 복구 안함!!!
-            print("SKIP", latent_filename[:-4])
+        # if os.path.isfile(latent_filename[:-4]+'.npy') and os.path.isfile(latent_filename[:-4]+'_atc_err.npy'):
+        #     # NOTICE: SKIP은 atc_err_sum만 생각하고, err_sum은 다시 복구 안함!!!
+        #     print("SKIP", latent_filename[:-4])
             
-            atc_err = np.load(latent_filename[:-4]+'_atc_err.npy')
-            atc_err_sum += atc_err            
-            continue
+        #     atc_err = np.load(latent_filename[:-4]+'_atc_err.npy')
+        #     atc_err_sum += atc_err            
+        #     continue
         
         if bi_mode:
             
@@ -755,7 +770,7 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             
             if bi_mode:
                 #bi mode에서는 normalize_atc 이면 revolute도 qpos_limit에 따라 계산을 달리 해주어야 한다.
-                err, atc_err, lat_vec, atc_vec = reconstruct(
+                err, atc_err, lat_vec, atc_vec, gt_vec, limit_range = reconstruct(
                     decoder,
                     int(args.iterations),
                     specs["CodeLength"],
@@ -772,6 +787,22 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
                     normalize_atc = specs['NormalizeAtc'],
                     bi_mode=True
                 )
+                assert len(atc_vec) == 1 and len(gt_vec) == 2 and len(limit_range) == 2, f"{atc_vec.shape}, {gt_vec.shape}\
+                    {limit_range.shape}"
+                data_dict['atc_vec_0'] = float(atc_vec[0][0].detach().cpu())
+                data_dict['gt_vec_0'] = float(gt_vec[0].detach().cpu())
+                data_dict['min_qpos_0'] = float(limit_range[0][0].detach().cpu())
+                data_dict['max_qpos_0'] = float(limit_range[0][1].detach().cpu())
+                
+                if len(atc_vec[0]) == 2:
+                    data_dict['atc_vec_1'] = float(atc_vec[0][1].detach().cpu())
+                    data_dict['gt_vec_1'] = float(gt_vec[1].detach().cpu())
+                    data_dict['min_qpos_1'] = float(limit_range[1][0].detach().cpu())
+                    data_dict['max_qpos_1'] = float(limit_range[1][1].detach().cpu())
+
+                data_dict['atc_err'] = atc_err
+                
+                csv_list.append(data_dict)
             else:
                 err, atc_err, lat_vec, atc_vec = reconstruct(
                     decoder,
@@ -861,6 +892,9 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
         print("PRINT final", final_filename, "ERR SUM", float(atc_err_sum) / len(npz_filenames))
         with open(final_filename, 'wb') as f:
             np.save(f, float(atc_err_sum) / len(npz_filenames))
+        
+        pd_frame = pd.DataFrame(csv_list)
+        pd_frame.to_csv(csv_path)
 
 
 def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model_state, dataset_name, bi_mode=False):
@@ -893,9 +927,12 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
     err_sum = 0.0
     atc_err_sum = 0.0
     save_latvec_only = False
-
+    csv_path = os.path.join(reconstruction_codes_dir, dataset_name, "result.csv") 
+    csv_list = []
     # generate meshes
     for ii, npz in enumerate(tqdm(npz_filenames)):
+        
+        data_dict = {}
         if bi_mode:
             dataset_name = "partnet_mobility"
             
@@ -905,6 +942,8 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
             
             inst, pose_idx = npz.split('/')[-3:-1]
             latent_filename = os.path.join(reconstruction_codes_dir, dataset_name, '_'.join([inst, pose_idx])+ ".pth")
+            data_dict['instance'] = int(inst)
+            data_dict['pose_idx'] = pose_idx
             print("latent filename", latent_filename)
         else:
             dataset_name = re.split('/', npz)[-3]
@@ -922,13 +961,13 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
             ):
                 continue
             
-        if os.path.isfile(latent_filename[:-4]+'.npy') and os.path.isfile(latent_filename[:-4]+'_atc_err.npy'):
-            # NOTICE: SKIP은 atc_err_sum만 생각하고, err_sum은 다시 복구 안함!!!
-            print("SKIP", latent_filename[:-4])
+        # if os.path.isfile(latent_filename[:-4]+'.npy') and os.path.isfile(latent_filename[:-4]+'_atc_err.npy'):
+        #     # NOTICE: SKIP은 atc_err_sum만 생각하고, err_sum은 다시 복구 안함!!!
+        #     print("SKIP", latent_filename[:-4])
             
-            atc_err = np.load(latent_filename[:-4]+'_atc_err.npy')
-            atc_err_sum += atc_err            
-            continue
+        #     atc_err = np.load(latent_filename[:-4]+'_atc_err.npy')
+        #     atc_err_sum += atc_err            
+        #     continue
         
         decoder.load_state_dict(saved_model_state["model_state_dict"])
 
@@ -985,7 +1024,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
         start = time.time()
         if specs["Articulation"]==True:
             if bi_mode:
-                err, atc_err, lat_vec, atc_vec = reconstruct_ttt(
+                err, atc_err, lat_vec, atc_vec, gt_vec, limit_range = reconstruct_ttt(
                     decoder,
                     int(args.iterations),
                     specs["CodeLength"],
@@ -1002,6 +1041,20 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
                     normalize_atc = specs['NormalizeAtc'],
                     bi_mode=True
                 )
+                assert len(atc_vec) == 1 and len(gt_vec) == 2 and len(limit_range) == 2, f"{atc_vec.shape}, {gt_vec.shape}\
+                    {limit_range.shape}"
+                    
+                data_dict['atc_vec_0'] = float(atc_vec[0][0].detach().cpu())
+                data_dict['gt_vec_0'] = float(gt_vec[0].detach().cpu())
+                data_dict['min_qpos_0'] = float(limit_range[0][0].detach().cpu())
+                data_dict['max_qpos_0'] = float(limit_range[0][1].detach().cpu())
+                
+                if len(atc_vec[0]) == 2:
+                    data_dict['atc_vec_1'] = float(atc_vec[0][1].detach().cpu())
+                    data_dict['gt_vec_1'] = float(gt_vec[1].detach().cpu())
+                    data_dict['min_qpos_1'] = float(limit_range[1][0].detach().cpu())
+                    data_dict['max_qpos_1'] = float(limit_range[1][1].detach().cpu())
+                csv_list.append(data_dict)
             else:
                 err, atc_err, lat_vec, atc_vec = reconstruct_ttt(
                     decoder,
@@ -1080,6 +1133,10 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
         print("PRINT final", final_filename, "ERR SUM", float(atc_err_sum) / len(npz_filenames))
         with open(final_filename, 'wb') as f:
             np.save(f, float(atc_err_sum) / len(npz_filenames))
+        
+        pd_frame = pd.DataFrame(csv_list)
+        pd_frame.to_csv(csv_path)
+        
 
 
 def generation(args, ws, specs, decoder, reconstruction_codes_dir, saved_model_epoch, dataset_name='shape2motion'):
