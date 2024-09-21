@@ -415,6 +415,7 @@ def reconstruct(
         else:
             if bi_mode:
                 # bi mode일때는 prismatic 일 때랑 revolute이면서 normalize atc일때는 atc_err와 atc_vec을 수정해주어야 함
+                
                 if normalize_atc:
                     atc_err = torch.abs(atc_vec.detach() - sdf_data[1].cuda())
                     print("before atc_err", atc_err, "atc vec", atc_vec, "gt", sdf_data[1])
@@ -441,6 +442,8 @@ def reconstruct(
                         atc_err = atc_err / 180 * np.pi
                         gt_vec = sdf_data[1] / 180 * np.pi
                         qpos_limit = qpos_limit / 180 * np.pi
+                    else:
+                        gt_vec = sdf_data[1]
 
             else:
                 atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
@@ -653,6 +656,8 @@ def reconstruct_ttt(
                         atc_err = atc_err / 180 * np.pi
                         gt_vec = sdf_data[1] / 180 * np.pi
                         qpos_limit = qpos_limit / 180 * np.pi
+                    else:
+                        gt_vec = sdf_data[1]
 
             else:
                 atc_err = torch.mean(torch.abs(atc_vec.detach() - sdf_data[1].cuda())).cpu().data.numpy()
@@ -787,7 +792,7 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
                     normalize_atc = specs['NormalizeAtc'],
                     bi_mode=True
                 )
-                assert len(atc_vec) == 1 and len(gt_vec) == 2 and len(limit_range) == 2, f"{atc_vec.shape}, {gt_vec.shape}\
+                assert len(atc_vec) == 1 and len(gt_vec) == len(atc_vec[0]) and len(limit_range) == len(atc_vec[0]), f"{atc_vec.shape}, {gt_vec.shape}\
                     {limit_range.shape}"
                 data_dict['atc_vec_0'] = float(atc_vec[0][0].detach().cpu())
                 data_dict['gt_vec_0'] = float(gt_vec[0].detach().cpu())
@@ -927,7 +932,6 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
     err_sum = 0.0
     atc_err_sum = 0.0
     save_latvec_only = False
-    csv_path = os.path.join(reconstruction_codes_dir, dataset_name, "result.csv") 
     csv_list = []
     # generate meshes
     for ii, npz in enumerate(tqdm(npz_filenames)):
@@ -935,6 +939,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
         data_dict = {}
         if bi_mode:
             dataset_name = "partnet_mobility"
+            csv_path = os.path.join(reconstruction_codes_dir, dataset_name, "result.csv") 
             
             npz_name  = re.split('/', npz)[-1][:-4]
             mesh_filename = os.path.join(reconstruction_meshes_dir, dataset_name, npz_name)
@@ -1041,7 +1046,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
                     normalize_atc = specs['NormalizeAtc'],
                     bi_mode=True
                 )
-                assert len(atc_vec) == 1 and len(gt_vec) == 2 and len(limit_range) == 2, f"{atc_vec.shape}, {gt_vec.shape}\
+                assert len(atc_vec) == 1 and len(gt_vec) == len(atc_vec[0]) and len(limit_range) == len(atc_vec[0]), f"{atc_vec.shape}, {gt_vec.shape}\
                     {limit_range.shape}"
                     
                 data_dict['atc_vec_0'] = float(atc_vec[0][0].detach().cpu())

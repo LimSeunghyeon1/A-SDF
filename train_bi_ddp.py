@@ -98,7 +98,9 @@ def main_function(experiment_directory, continue_from, batch_split):
     data_source = specs["DataSource"]
     arch = __import__("networks." + specs["NetworkArch"], fromlist=["Decoder"])
     latent_size = specs["CodeLength"]
-
+    world_size = dist.get_world_size()
+    specs["ScenesPerBatch"] = int(specs["ScenesPerBatch"] / world_size)
+    print("WORLD SIZE", world_size, "batch", specs["ScenesPerBatch"])
     num_epochs = specs["NumEpochs"]
     normalize_atc = specs["NormalizeAtc"]
     lr_schedules = get_learning_rate_schedules(specs)
