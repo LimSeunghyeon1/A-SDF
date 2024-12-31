@@ -353,15 +353,25 @@ if __name__ == "__main__":
         + "subbatches. This allows for training with large effective batch "
         + "sizes in memory constrained environments.",
     )
-    random.seed(0)
-    np.random.seed(0)
-    torch.manual_seed(0)
-
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(0)
-        torch.cuda.manual_seed_all(0) 
+    arg_parser.add_argument(
+        "--seed",
+        dest="seed",
+        default=0,
+	   type=int,
+    )
+    
+    
         
     asdf.add_common_args(arg_parser)
     args = arg_parser.parse_args()
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+
     asdf.configure_logging(args)
     main_function(args.experiment_directory, args.continue_from, int(args.batch_split))

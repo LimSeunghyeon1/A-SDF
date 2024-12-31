@@ -8,7 +8,7 @@ import json
 import math
 import pandas as pd
 
-pth = '/home/shlim/data/projects/Articulation_project/A-SDF/experiments_real_0/'
+pth = 'experiments_real_256/'
 x_sum = 0
 cnt = 0
 #default dict로써 
@@ -33,16 +33,32 @@ err_dict = {'ttt': {'one_prismatic': defaultdict(lambda: []), 'double_prismatic'
 mode_result_dict = {'ttt': {'one_prismatic': defaultdict(lambda:defaultdict(lambda:{})), 'double_prismatic': defaultdict(lambda:defaultdict(lambda:{})),\
     'one_revolute': defaultdict(lambda:defaultdict(lambda:{})), 'double_revolute': defaultdict(lambda:defaultdict(lambda:{}))}, 'no_ttt': {'one_prismatic': defaultdict(lambda:defaultdict(lambda:{})), 'double_prismatic': defaultdict(lambda:defaultdict(lambda:{})),\
     'one_revolute': defaultdict(lambda:defaultdict(lambda:{})), 'double_revolute': defaultdict(lambda:defaultdict(lambda:{}))}}
+inference_time_dict = {'ttt': {'one_prismatic': defaultdict(lambda:0), 'double_prismatic': defaultdict(lambda:0),\
+    'one_revolute': defaultdict(lambda:0), 'double_revolute': defaultdict(lambda:0)}, 'no_ttt': {'one_prismatic': defaultdict(lambda:0), 'double_prismatic': defaultdict(lambda:0),\
+    'one_revolute': defaultdict(lambda:0), 'double_revolute': defaultdict(lambda:0)}}
+
+
 for dirpath, dirname, filenames in os.walk(pth):
     for filename in filenames:
         if '.npy' in filename:
             if 'atc_err.npy' in filename:
+                continue
+            elif 'final_infrence_time.npy' in filename:
+                mode, category, exp_type = dirpath.split('/')[-6:-3]
+                if 'testset_ttt' in exp_type:
+                    exp_type = 'ttt'
+                else:
+                    exp_type = 'no_ttt'
+                inf_time = np.load(os.path.join(dirpath, filename))
+                inference_time_dict[exp_type][mode][category] = float(inf_time)
                 continue
             try:
                 instance_num, _, pose_num = filename[:-4].split('_')
             except ValueError:
                 continue
             assert pose_num.isdigit()
+            print("filename", filename)
+
             index_name = filename[:-4]
             mode, category, exp_type, _a, _b, _c = dirpath.split('/')[-6:]
             if _a == '1000' and _b == 'Codes' and _c == 'partnet_mobility':
@@ -65,9 +81,8 @@ for dirpath, dirname, filenames in os.walk(pth):
                     
                 else:
                     raise NotImplementedError
-                with open(os.path.join('../../pose_data/', 'test', category, str(instance_num), f'pose_{pose_num}', 'joint_cfg.json'), 'rb') as f:
+                with open(os.path.join('../arti_data/sdf_data/', 'test', category, str(instance_num), f'pose_{pose_num}', 'joint_cfg.json'), 'rb') as f:
                     json_dict = json.load(f)
-                
                 for jd in json_dict.values():
                     p_idx = jd['parent_link']['index'] - 1
                     c_idx = jd['child_link']['index'] - 1
@@ -189,7 +204,7 @@ for exp in mode_result_dict.keys():
                 exp_str = 'Results_recon_testset_ttt'
             else:
                 exp_str = 'Results_recon_testset'
-            err_avg_path = os.path.join('experiments', mode, category, exp_str, '1000', "Codes","partnet_mobility","final_atc_err.npy")
+            err_avg_path = os.path.join(pth, mode, category, exp_str, '1000', "Codes","partnet_mobility","final_atc_err.npy")
             err_avg_check = np.load(err_avg_path)
             assert abs(err_avg_check-err_avg) < 1e-3, err_avg_path
             err_avg_dict['err_avg'][exp][mode][category] = err_avg
@@ -199,6 +214,10 @@ for exp in mode_result_dict.keys():
 err_avg_dict = defaultdict_to_dict(err_avg_dict)
 with open(os.path.join(base_dir,'csv_folder', 'err.json'), 'w') as f:
     json.dump(err_avg_dict, f, indent=4)
+    
+inference_time_dict = defaultdict_to_dict(inference_time_dict)
+with open(os.path.join(base_dir,'csv_folder', 'inference_time.json'), 'w') as f:
+    json.dump(inference_time_dict, f, indent=4)
         
         
 

@@ -39,7 +39,7 @@ def get_instance_filenames(data_source, split):
                 npzfiles += [instance_filename]
     return npzfiles
 
-def get_instance_filenames_bi(data_source, pkl_path, category, split):
+def get_instance_filenames_bi(data_source, pkl_path, category, split, real_world=False):
     '''
     pkl file에 있는 것들 로드
     '''
@@ -62,21 +62,43 @@ def get_instance_filenames_bi(data_source, pkl_path, category, split):
     #             npzfiles += [instance_filename]
     # return npzfiles
     total_valid_paths = []
-    # dir = self.data_source
-    data_dict = np.load(pkl_path, allow_pickle=True)
-    for cat in data_dict.keys():
-        if cat != category: continue
-        for spt in data_dict[cat].keys():
-            if split == 'trn':
-                raise NotImplementedError
-                if spt == 'test': continue
-            else:
-                assert split == 'test'
-                if spt == 'train' or spt == 'val': continue
-            instances = data_dict[cat][spt]
-            for instance in instances:
-                for i in range(100):
-                    total_valid_paths.append(os.path.join(data_source, spt, cat, str(instance), f"pose_{i}", "points_with_sdf_label_binary.ply"))
+    
+    if real_world:
+        assert pkl_path is None, pkl_path
+        if split == 'trn':
+            trn = glob.glob('../arti_data/sdf_data/train/**/traj.pkl', recursive=True)
+            val = glob.glob('../arti_data/sdf_data/val/**/traj.pkl', recursive=True)
+            total_valid_paths.extend(trn)
+            total_valid_paths.extend(val)
+        else:
+            assert split == 'test'
+            test = glob.glob('../arti_data/sdf_data/test/**/traj.pkl', recursive=True)
+            total_valid_paths.extend(test)
+        inst_nums = set([int(d.split('/')[-3]) for d in total_valid_paths])
+        # NOTICE: 1228 real world 세팅 검증
+        print("NOTICE:1228 real world 세팅")
+        if split == 'trn':
+            assert len(inst_nums) == 1 and 101 in inst_nums
+        else:
+            assert len(inst_nums) == 1 and 102 in inst_nums
+            
+    else:
+        # dir = self.data_source
+        data_dict = np.load(pkl_path, allow_pickle=True)
+        for cat in data_dict.keys():
+            if cat != category: continue
+            for spt in data_dict[cat].keys():
+                if split == 'trn':
+                    raise NotImplementedError
+                    if spt == 'test': continue
+                else:
+                    assert split == 'test'
+                    if spt == 'train' or spt == 'val': continue
+                instances = data_dict[cat][spt]
+                for instance in instances:
+                    for i in range(100):
+                        total_valid_paths.append(os.path.join(data_source, spt, cat, str(instance), f"pose_{i}", "points_with_sdf_label_binary.ply"))
+    
         
                 
     return total_valid_paths    
@@ -127,7 +149,7 @@ def read_sdf_samples_into_ram(filename, articulation=False, num_atc_parts=1):
     else:
         return [pos_tensor, neg_tensor]
 
-def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, num_atc_parts=1):
+def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, num_atc_parts=1, real_world=False):
     '''
     plyfile을 읽는다.
     '''
@@ -147,39 +169,93 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
     #         return ([pos_tensor, neg_tensor], torch.Tensor([atc1, atc2]), instance_idx)
     # else:
     #     return [pos_tensor, neg_tensor]
-    vertex_data = PlyData.read(filename)['vertex']
-    # 필요한 속성 추출
-    x = vertex_data['x']
-    y = vertex_data['y']
-    z = vertex_data['z']
-    sdf = vertex_data['sdf']
-    label = vertex_data['label']
     
-    obj_idx = filename.split('/')[-3]
-    assert obj_idx.isdigit(), obj_idx
-    obj_idx = int(obj_idx)
-    # 라벨을 바꾸어줌
-    new_label = np.full_like(label, -100)
-    if obj_idx in to_switch_label:
-        unique_label = np.unique(label)
-        #1,2,3,4,....로 라벨링하기
-        for ul in unique_label:
-            to_change = to_switch_label[obj_idx][ul-1]+1
-            if to_switch_label[obj_idx][ul-1] != -100:
-                new_label[label == ul] = to_change
-    else:
-        # <= num_atc_parts+1인것들 저장
-        for i in range(num_atc_parts+2):
-            new_label[label == i] = i
-    
-    #체크 num_atc_parts+1보다 큰라벨은 없어야
-    assert new_label.max() == num_atc_parts+1, f"num_atc_parts: {num_atc_parts}, new label: {new_label.max()}"
-
-
-    xyz = np.vstack((x, y, z, sdf, new_label)).T
-    
+    if real_world:
+        data = np.load(filename, allow_pickle=True) 
+        pc = data["sdf_points"] # x, y, z, sdf, Nx4
+        label = data["sdf_labels"] - 1
+        assert label.min() == 0, "We already prune out label 0 for sdf_points"
+        points = np.concatenate((pc, np.expand_dims(label, axis=-1)), axis=-1)
+        points = points[~np.any(np.isnan(points), axis=-1)]
         
-    assert xyz.shape[-1] == 5, xyz.shape
+        points = points.reshape(-1, 5)
+        
+        # pc, rgb, label 분리
+        pc = points[:, :3]
+        sdf = points[:, 3]
+        lbl = points[:, -1]
+
+        # 고유한 라벨 추출
+        unique_labels = np.unique(lbl)
+
+        # 최종 마스크 초기화 (모든 포인트를 제외 상태로 시작)
+        final_mask = np.zeros(points.shape[0], dtype=bool)
+
+        # 각 라벨별로 필터링 수행
+        for label in unique_labels:
+            # 현재 라벨에 해당하는 포인트 인덱스
+            label_mask = (lbl == label)
+            
+            # 해당 라벨의 pc 데이터 추출
+            pc_label = pc[label_mask]
+            
+            # 라벨별 평균 및 표준편차 계산
+            pc_mean = np.mean(pc_label, axis=0)
+            pc_std = np.std(pc_label, axis=0)
+            
+            # 표준편차 1.5배를 초과하지 않는 포인트 마스크
+            within_std_mask = np.all(np.abs(pc_label - pc_mean) <= 1.5 * pc_std, axis=1)
+            
+            # 최종 마스크에 반영
+            final_mask[label_mask] = within_std_mask
+
+        # 마스크를 적용하여 필터링된 포인트 얻기
+        xyz = points[final_mask]
+        pc = xyz[:, :3]
+        sdf = xyz[:, 3]
+        lbl = xyz[:, -1]
+        
+
+        # 필터링된 포인트의 최소 label이 0인지 확인
+        assert xyz[:, -1].min() == 0, "최소 라벨 값이 0이 아닙니다."
+        
+        assert xyz.shape[-1] == 5, xyz.shape
+            
+    else:
+
+        vertex_data = PlyData.read(filename)['vertex']
+        # 필요한 속성 추출
+        x = vertex_data['x']
+        y = vertex_data['y']
+        z = vertex_data['z']
+        sdf = vertex_data['sdf']
+        label = vertex_data['label']
+        
+        obj_idx = filename.split('/')[-3]
+        assert obj_idx.isdigit(), obj_idx
+        obj_idx = int(obj_idx)
+        # 라벨을 바꾸어줌
+        new_label = np.full_like(label, -100)
+        if obj_idx in to_switch_label:
+            unique_label = np.unique(label)
+            #1,2,3,4,....로 라벨링하기
+            for ul in unique_label:
+                to_change = to_switch_label[obj_idx][ul-1]+1
+                if to_switch_label[obj_idx][ul-1] != -100:
+                    new_label[label == ul] = to_change
+        else:
+            # <= num_atc_parts+1인것들 저장
+            for i in range(num_atc_parts+2):
+                new_label[label == i] = i
+        
+        #체크 num_atc_parts+1보다 큰라벨은 없어야
+        assert new_label.max() == num_atc_parts+1, f"num_atc_parts: {num_atc_parts}, new label: {new_label.max()}"
+
+
+        xyz = np.vstack((x, y, z, sdf, new_label)).T
+        
+            
+        assert xyz.shape[-1] == 5, xyz.shape
     
     pos = xyz[sdf >= 0]
     neg = xyz[sdf < 0]
@@ -211,22 +287,22 @@ def read_sdf_samples_into_ram_bi(filename, normalize_atc, articulation=False, nu
         # parent link와 child link 탐색하고, num_atc parts가=1이면 1,2 num_atc_parts=2이면 1,2,3만본다.
         p_idx = joint_info['parent_link']['index']
         c_idx = joint_info['child_link']['index']
-        
-        # 라벨 스위치
-        if obj_idx in to_switch_label:
-            to_p_change = to_switch_label[obj_idx][p_idx-1]+1
-            if to_switch_label[obj_idx][p_idx-1] != -100:
-                print("p_idx change to", p_idx, "to", to_p_change)
-                p_idx = to_p_change
-            else:
-                p_idx = -100
-            
-            to_c_change = to_switch_label[obj_idx][c_idx-1]+1
-            if to_switch_label[obj_idx][c_idx-1] != -100:
-                print("c_idx change to", c_idx, "to", to_c_change)
-                c_idx = to_c_change
-            else:
-                c_idx = -100
+        if not real_world:
+            # 라벨 스위치
+            if obj_idx in to_switch_label:
+                to_p_change = to_switch_label[obj_idx][p_idx-1]+1
+                if to_switch_label[obj_idx][p_idx-1] != -100:
+                    print("p_idx change to", p_idx, "to", to_p_change)
+                    p_idx = to_p_change
+                else:
+                    p_idx = -100
+                
+                to_c_change = to_switch_label[obj_idx][c_idx-1]+1
+                if to_switch_label[obj_idx][c_idx-1] != -100:
+                    print("c_idx change to", c_idx, "to", to_c_change)
+                    c_idx = to_c_change
+                else:
+                    c_idx = -100
             
         assert num_atc_parts == 1 or num_atc_parts == 2, num_atc_parts
         # joint는 만약 double이면 라벨 2번과 연결되어 있는 것을 먼저 넣고, 3번이랑 되어 있는 것을 그 다음에 집어넣는다.
@@ -297,40 +373,96 @@ def read_sdf_samples_into_ram_rbo(filename, articulation=False, num_atc_parts=1)
     else:
         return [pos_tensor, neg_tensor]
 
-def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=False, num_atc_parts=1):
-    vertex_data = PlyData.read(filename)['vertex']
-    # 필요한 속성 추출
-    x = vertex_data['x']
-    y = vertex_data['y']
-    z = vertex_data['z']
-    sdf = vertex_data['sdf']
-    label = vertex_data['label']
-    
-    obj_idx = filename.split('/')[-3]
-    assert obj_idx.isdigit(), obj_idx
-    obj_idx = int(obj_idx)
-    # 라벨을 바꾸어줌
-    new_label = np.full_like(label, -100)
-    
-    if obj_idx in to_switch_label:
-        unique_label = np.unique(label)
-        #1,2,3,4,....로 라벨링하기
-        for ul in unique_label:
-            to_change = to_switch_label[obj_idx][ul-1]+1
-            if to_switch_label[obj_idx][ul-1] != -100:
-                new_label[label == ul] = to_change
+def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=False, num_atc_parts=1, real_world=False):
+    if real_world:
+        data = np.load(filename, allow_pickle=True) 
+        pc = data["sdf_points"] # x, y, z, sdf, Nx4
+        label = data["sdf_labels"] - 1
+        assert label.min() == 0, "We already prune out label 0 for sdf_points"
+        points = np.concatenate((pc, np.expand_dims(label, axis=-1)), axis=-1)
+        points = points[~np.any(np.isnan(points), axis=-1)]
+        
+        points = points.reshape(-1, 5)
+        
+        # pc, rgb, label 분리
+        pc = points[:, :3]
+        sdf = points[:, 3]
+        lbl = points[:, -1]
+
+        # 고유한 라벨 추출
+        unique_labels = np.unique(lbl)
+
+        # 최종 마스크 초기화 (모든 포인트를 제외 상태로 시작)
+        final_mask = np.zeros(points.shape[0], dtype=bool)
+
+        # 각 라벨별로 필터링 수행
+        for label in unique_labels:
+            # 현재 라벨에 해당하는 포인트 인덱스
+            label_mask = (lbl == label)
+            
+            # 해당 라벨의 pc 데이터 추출
+            pc_label = pc[label_mask]
+            
+            # 라벨별 평균 및 표준편차 계산
+            pc_mean = np.mean(pc_label, axis=0)
+            pc_std = np.std(pc_label, axis=0)
+            
+            # 표준편차 1.5배를 초과하지 않는 포인트 마스크
+            within_std_mask = np.all(np.abs(pc_label - pc_mean) <= 1.5 * pc_std, axis=1)
+            
+            # 최종 마스크에 반영
+            final_mask[label_mask] = within_std_mask
+
+        # 마스크를 적용하여 필터링된 포인트 얻기
+        xyz = points[final_mask]
+        pc = xyz[:, :3]
+        sdf = xyz[:, 3]
+        lbl = xyz[:, -1]
+        
+
+        # 필터링된 포인트의 최소 label이 0인지 확인
+        assert xyz[:, -1].min() == 0, "최소 라벨 값이 0이 아닙니다."
+        
+        assert xyz.shape[-1] == 5, xyz.shape
+            
+            
+                        
+            
     else:
-        # <= num_atc_parts+1인것들 저장
-        for i in range(num_atc_parts+2):
-            new_label[label == i] = i
-    
-    #체크 num_atc_parts+1보다 큰라벨은 없어야
-    assert new_label.max() == num_atc_parts+1, f"num_atc_parts: {num_atc_parts}, new label: {new_label.max()}"
+        vertex_data = PlyData.read(filename)['vertex']
+        # 필요한 속성 추출
+        x = vertex_data['x']
+        y = vertex_data['y']
+        z = vertex_data['z']
+        sdf = vertex_data['sdf']
+        label = vertex_data['label']
+        
+        obj_idx = filename.split('/')[-3]
+        assert obj_idx.isdigit(), obj_idx
+        obj_idx = int(obj_idx)
+        # 라벨을 바꾸어줌
+        new_label = np.full_like(label, -100)
+        
+        if obj_idx in to_switch_label:
+            unique_label = np.unique(label)
+            #1,2,3,4,....로 라벨링하기
+            for ul in unique_label:
+                to_change = to_switch_label[obj_idx][ul-1]+1
+                if to_switch_label[obj_idx][ul-1] != -100:
+                    new_label[label == ul] = to_change
+        else:
+            # <= num_atc_parts+1인것들 저장
+            for i in range(num_atc_parts+2):
+                new_label[label == i] = i
+        
+        #체크 num_atc_parts+1보다 큰라벨은 없어야
+        assert new_label.max() == num_atc_parts+1, f"num_atc_parts: {num_atc_parts}, new label: {new_label.max()}"
 
 
-    xyz = np.vstack((x, y, z, sdf, new_label)).T
-    assert xyz.shape[-1] == 5, xyz.shape
+        xyz = np.vstack((x, y, z, sdf, new_label)).T
+        assert xyz.shape[-1] == 5, xyz.shape
     
+
     pos = xyz[sdf >= 0]
     neg = xyz[sdf < 0]
     assert subsample is not None
@@ -358,24 +490,26 @@ def unpack_sdf_samples_bi(filename, normalize_atc, subsample=None, articulation=
     
     
     atc = np.zeros((num_atc_parts))
+    
     for joint_info in joint_dict.values():
         # parent link와 child link 탐색하고, num_atc parts가=1이면 1,2 num_atc_parts=2이면 1,2,3만본다.
         p_idx = joint_info['parent_link']['index']
         c_idx = joint_info['child_link']['index']
         
-        # 라벨 스위치
-        if obj_idx in to_switch_label:
-            to_p_change = to_switch_label[obj_idx][p_idx-1]+1
-            if to_switch_label[obj_idx][p_idx-1] != -100:
-                p_idx = to_p_change
-            else:
-                p_idx = -100
-            
-            to_c_change = to_switch_label[obj_idx][c_idx-1]+1
-            if to_switch_label[obj_idx][c_idx-1] != -100:
-                c_idx = to_c_change
-            else:
-                c_idx = -100
+        if not real_world:
+            # 라벨 스위치
+            if obj_idx in to_switch_label:
+                to_p_change = to_switch_label[obj_idx][p_idx-1]+1
+                if to_switch_label[obj_idx][p_idx-1] != -100:
+                    p_idx = to_p_change
+                else:
+                    p_idx = -100
+                
+                to_c_change = to_switch_label[obj_idx][c_idx-1]+1
+                if to_switch_label[obj_idx][c_idx-1] != -100:
+                    c_idx = to_c_change
+                else:
+                    c_idx = -100
             
         assert num_atc_parts == 1 or num_atc_parts == 2, num_atc_parts
         # joint는 만약 double이면 라벨 2번과 연결되어 있는 것을 먼저 넣고, 3번이랑 되어 있는 것을 그 다음에 집어넣는다.
@@ -631,6 +765,7 @@ class SDFSamplesBI(torch.utils.data.Dataset):
         num_files=1000000,
         articulation=False,
         num_atc_parts=1,
+        real_world=False,
     ):
         self.pkl_path = pkl_path
         self.subsample = subsample
@@ -640,6 +775,8 @@ class SDFSamplesBI(torch.utils.data.Dataset):
         self.category = category
         self.obj_id2lat_vec = dict() #obj_idx 별 lat_vec에 사용되는 인덱스 저장
         
+        self.real_world = real_world
+
         self.files = self._load_data()
         self.articualtion = articulation
         self.num_atc_parts = num_atc_parts
@@ -652,26 +789,51 @@ class SDFSamplesBI(torch.utils.data.Dataset):
         filename = self.files[idx]
         obj_idx = filename.split('/')[-3]
         assert obj_idx.isdigit(), obj_idx
-        obj_idx = int(obj_idx)        
-        samples, atc = unpack_sdf_samples_bi(filename, normalize_atc=self.normalize_atc, subsample=self.subsample, articulation=self.articualtion, num_atc_parts=self.num_atc_parts)
+        obj_idx = int(obj_idx)
+        
+        samples, atc = unpack_sdf_samples_bi(filename, normalize_atc=self.normalize_atc, subsample=self.subsample, articulation=self.articualtion, num_atc_parts=self.num_atc_parts, real_world=self.real_world)
         return (samples, atc, self.obj_id2lat_vec[obj_idx])
     def _load_data(self):
         total_valid_paths = []
         # dir = self.data_source
         cnt = 0
-        data_dict = np.load(self.pkl_path, allow_pickle=True)
-        for cat in data_dict.keys():
-            if cat != self.category: continue
-            for spt in data_dict[cat].keys():
-                if self.split == 'trn':
-                    if spt == 'test': continue
-                else:
-                    assert self.split == 'test'
-                    if spt == 'train' or spt == 'val': continue
-                instances = data_dict[cat][spt]
-                for instance in instances:
-                    self.obj_id2lat_vec[instance] = cnt
-                    cnt += 1
-                    for i in range(100):
-                        total_valid_paths.append(os.path.join(self.data_source, spt, cat, str(instance), f"pose_{i}","points_with_sdf_label_binary.ply"))
+        
+        if self.real_world:
+            assert self.pkl_path is None
+            if self.split == 'trn':
+                print("WARNING!! 1230 setting... Other settings can be mismatched!!")
+                trn = glob.glob('../arti_data/sdf_data/train/**/traj.pkl', recursive=True)
+                val = glob.glob('../arti_data/sdf_data/val/**/traj.pkl', recursive=True)
+                total_valid_paths.extend(trn)
+                total_valid_paths.extend(val)
+            else:
+                assert self.split == 'test'
+                test = glob.glob('../arti_data/sdf_data/test/**/traj.pkl', recursive=True)
+                total_valid_paths.extend(test)
+            inst_nums = set([int(d.split('/')[-3]) for d in total_valid_paths])
+            # NOTICE: 1228 real world 세팅 검증
+            if self.split == 'trn':
+                assert len(inst_nums) == 1 and 101 in inst_nums
+            else:
+                assert len(inst_nums) == 1 and 102 in inst_nums
+                
+            for instance in inst_nums:
+                self.obj_id2lat_vec[instance] = cnt
+                cnt += 1
+        else:
+            data_dict = np.load(self.pkl_path, allow_pickle=True)
+            for cat in data_dict.keys():
+                if cat != self.category: continue
+                for spt in data_dict[cat].keys():
+                    if self.split == 'trn':
+                        if spt == 'test': continue
+                    else:
+                        assert self.split == 'test'
+                        if spt == 'train' or spt == 'val': continue
+                    instances = data_dict[cat][spt]
+                    for instance in instances:
+                        self.obj_id2lat_vec[instance] = cnt
+                        cnt += 1
+                        for i in range(100):
+                            total_valid_paths.append(os.path.join(self.data_source, spt, cat, str(instance), f"pose_{i}","points_with_sdf_label_binary.ply"))
         return total_valid_paths    

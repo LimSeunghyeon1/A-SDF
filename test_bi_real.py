@@ -47,7 +47,8 @@ def test(args, ws, specs):
     else:
         raise NotImplementedError
     
-    pkl_path = os.path.join("pkl_dir", f"{mode.lower()}.pkl")
+    # pkl_path = os.path.join("pkl_dir", f"{mode.lower()}.pkl")
+    pkl_path = None
     print("pkl path", pkl_path)
     print("data source", args.data_source)
     args.data_source = specs["DataSource"]
@@ -58,14 +59,14 @@ def test(args, ws, specs):
         # test files
         
         
-        filenames = asdf.data.get_instance_filenames_bi(args.data_source, pkl_path, category, 'test')
+        filenames = asdf.data.get_instance_filenames_bi(args.data_source, pkl_path, category, 'test', real_world=True)
         # reconstruct test files
-        reconstruct_testset(args, ws, specs, decoder, filenames, saved_model_epoch, dataset_name=None, bi_mode=True)
+        reconstruct_testset(args, ws, specs, decoder, filenames, saved_model_epoch, dataset_name=None, bi_mode=True, real_world=True)
 
     elif args.mode=='recon_testset_ttt':
-        filenames = asdf.data.get_instance_filenames_bi(args.data_source, pkl_path, category, 'test')
+        filenames = asdf.data.get_instance_filenames_bi(args.data_source, pkl_path, category, 'test', real_world=True)
         # reconstruct test files
-        reconstruct_testset_ttt(args, ws, specs, decoder, filenames, saved_model_state, dataset_name=None, bi_mode=True)
+        reconstruct_testset_ttt(args, ws, specs, decoder, filenames, saved_model_state, dataset_name=None, bi_mode=True, real_world=True)
     
     # elif args.mode=='inter_testset':
     
@@ -212,6 +213,7 @@ if __name__ == "__main__":
 
     asdf.configure_logging(args)
     specs_filename = os.path.join(args.experiment_directory, "specs.json")
+    print("SPECS FILENMAE", specs_filename)
     if not os.path.isfile(specs_filename):
         raise Exception(
             'The experiment directory does not include specifications file "specs.json"'

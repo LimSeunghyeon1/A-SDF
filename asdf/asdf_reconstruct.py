@@ -340,6 +340,9 @@ def reconstruct(
     loss_num = 0
     loss_l1 = torch.nn.L1Loss()
     decoder.eval()
+    
+    torch.cuda.synchronize()
+    start_inference_time = time.time()
 
     # two-step optimization
     for e in range(num_iterations*2):
@@ -404,6 +407,10 @@ def reconstruct(
 
         loss_num = loss.cpu().data.numpy()
 
+    torch.cuda.synchronize()
+    end_inference_time = time.time()
+    inference_time = end_inference_time - start_inference_time
+
     #pos_mask = (torch.sign(pred_sdf)!=torch.sign(sdf_gt)).data & (sdf_gt>0).data
     #neg_mask = (torch.sign(pred_sdf)!=torch.sign(sdf_gt)).data & (sdf_gt<0).data
     #print(torch.sum(pos_mask), torch.sum(neg_mask))
@@ -450,7 +457,7 @@ def reconstruct(
                                 
             # computer angle pred acc
             print(atc_vec)
-            return loss_num, atc_err, lat_vec, atc_vec, gt_vec, qpos_limit
+            return loss_num, atc_err, lat_vec, atc_vec, gt_vec, qpos_limit, inference_time
 
     else:
         return loss_num, lat_vec
@@ -553,6 +560,15 @@ def reconstruct_ttt(
     loss_l1 = torch.nn.L1Loss()
     decoder.eval()
 
+
+    '''
+    INFERENCE TIME 측정
+    
+    '''
+    torch.cuda.synchronize()
+    start_inference_time = time.time()
+    
+    
     # two-step optimization
     for e in range(num_iterations*3):
 
@@ -620,6 +636,10 @@ def reconstruct_ttt(
 
         loss_num = loss.cpu().data.numpy()
 
+    torch.cuda.synchronize()
+    end_inference_time = time.time()
+    inference_time = end_inference_time - start_inference_time
+    
     #pos_mask = (torch.sign(pred_sdf)!=torch.sign(sdf_gt)).data & (sdf_gt>0).data
     #neg_mask = (torch.sign(pred_sdf)!=torch.sign(sdf_gt)).data & (sdf_gt<0).data
     #print(torch.sum(pos_mask), torch.sum(neg_mask))
@@ -664,14 +684,14 @@ def reconstruct_ttt(
                                 
             # computer angle pred acc
             print(atc_vec)
-            return loss_num, atc_err, lat_vec, atc_vec, gt_vec, qpos_limit
+            return loss_num, atc_err, lat_vec, atc_vec, gt_vec, qpos_limit, inference_time
 
 
     else:
         return loss_num, lat_vec
 
     
-def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epoch, dataset_name, bi_mode=False):
+def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epoch, dataset_name, bi_mode=False, real_world=False):
 
     # build saving directory
     reconstruction_dir = os.path.join(
@@ -693,8 +713,13 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
     if not os.path.isdir(reconstruction_codes_dir):
         os.makedirs(reconstruction_codes_dir)    
     
+    # For measuring inference time
+    torch.cuda.empty_cache()  # GPU 메모리 캐시 초기화
+    
+    
     err_sum = 0.0
     atc_err_sum = 0.0
+    inference_time_sum = 0.0
     save_latvec_only = False
     csv_list = []
     # generate meshes
@@ -744,7 +769,7 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             bi mode에서는 npz대신 plyfile을 사용합니다.
             data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
             '''
-            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"])
+            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"], real_world=real_world)
         else:
             if "npz" not in npz:
                 continue
@@ -775,7 +800,7 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             
             if bi_mode:
                 #bi mode에서는 normalize_atc 이면 revolute도 qpos_limit에 따라 계산을 달리 해주어야 한다.
-                err, atc_err, lat_vec, atc_vec, gt_vec, limit_range = reconstruct(
+                err, atc_err, lat_vec, atc_vec, gt_vec, limit_range, inference_time = reconstruct(
                     decoder,
                     int(args.iterations),
                     specs["CodeLength"],
@@ -806,6 +831,8 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
                     data_dict['max_qpos_1'] = float(limit_range[1][1].detach().cpu())
 
                 data_dict['atc_err'] = atc_err
+                
+                data_dict['inference_time'] = inference_time
                 
                 csv_list.append(data_dict)
             else:
@@ -852,7 +879,7 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
             
             print("err: ", err, "atc_err: ", atc_err)
             
-            
+            inference_time_sum += inference_time
             atc_err_sum += atc_err
             err_sum += err
             print("err avg: ", err_sum/(ii+1), "atc_err avg: ", atc_err_sum/(ii+1))
@@ -898,11 +925,15 @@ def reconstruct_testset(args, ws, specs, decoder, npz_filenames, saved_model_epo
         with open(final_filename, 'wb') as f:
             np.save(f, float(atc_err_sum) / len(npz_filenames))
         
+        final_inference_time_filename = os.path.join('/'.join(latent_filename.split('/')[:-1]), 'final_infrence_time.npy')
+        with open(final_inference_time_filename, 'wb') as f:
+            np.save(f, float(inference_time_sum) / len(npz_filenames))
+        
         pd_frame = pd.DataFrame(csv_list)
         pd_frame.to_csv(csv_path)
 
 
-def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model_state, dataset_name, bi_mode=False):
+def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model_state, dataset_name, bi_mode=False, real_world=False):
     # build saving directory
     reconstruction_dir = os.path.join(
         args.experiment_directory, ws.recon_testset_ttt_subdir, str(saved_model_state["epoch"])
@@ -931,8 +962,14 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
     
     err_sum = 0.0
     atc_err_sum = 0.0
+    inference_time_sum = 0.0
     save_latvec_only = False
     csv_list = []
+    
+    # For measuring inference time
+    torch.cuda.empty_cache()  # GPU 메모리 캐시 초기화
+    
+    
     # generate meshes
     for ii, npz in enumerate(tqdm(npz_filenames)):
         
@@ -983,7 +1020,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
             bi mode에서는 npz대신 plyfile을 사용합니다.
             data sdf 구성: samples, torch.Tensor(atc), torch.Tensor(atc_limit)
             '''
-            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"])
+            data_sdf = asdf.data.read_sdf_samples_into_ram_bi(npz, specs['NormalizeAtc'], articulation=True, num_atc_parts=specs["NumAtcParts"], real_world=real_world)
         else:
             if "npz" not in npz:
                 continue
@@ -1029,7 +1066,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
         start = time.time()
         if specs["Articulation"]==True:
             if bi_mode:
-                err, atc_err, lat_vec, atc_vec, gt_vec, limit_range = reconstruct_ttt(
+                err, atc_err, lat_vec, atc_vec, gt_vec, limit_range, inference_time = reconstruct_ttt(
                     decoder,
                     int(args.iterations),
                     specs["CodeLength"],
@@ -1059,6 +1096,9 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
                     data_dict['gt_vec_1'] = float(gt_vec[1].detach().cpu())
                     data_dict['min_qpos_1'] = float(limit_range[1][0].detach().cpu())
                     data_dict['max_qpos_1'] = float(limit_range[1][1].detach().cpu())
+                
+                data_dict['atc_err'] = atc_err
+                data_dict['inference_time'] = inference_time
                 csv_list.append(data_dict)
             else:
                 err, atc_err, lat_vec, atc_vec = reconstruct_ttt(
@@ -1099,6 +1139,7 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
             print("err: ", err, "atc_err: ", atc_err)
             atc_err_sum += atc_err
             err_sum += err
+            inference_time_sum += inference_time
             print("err avg: ", err_sum/(ii+1), "atc_err avg: ", atc_err_sum/(ii+1))
         else:
             err_sum += err
@@ -1138,6 +1179,10 @@ def reconstruct_testset_ttt(args, ws, specs, decoder, npz_filenames, saved_model
         print("PRINT final", final_filename, "ERR SUM", float(atc_err_sum) / len(npz_filenames))
         with open(final_filename, 'wb') as f:
             np.save(f, float(atc_err_sum) / len(npz_filenames))
+        
+        final_inference_time_filename = os.path.join('/'.join(latent_filename.split('/')[:-1]), 'final_infrence_time.npy')
+        with open(final_inference_time_filename, 'wb') as f:
+            np.save(f, float(inference_time_sum) / len(npz_filenames))
         
         pd_frame = pd.DataFrame(csv_list)
         pd_frame.to_csv(csv_path)
